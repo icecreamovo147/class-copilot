@@ -1,0 +1,10 @@
+pub mod cohort;
+pub mod student;
+pub mod homework;
+pub mod attendance;
+pub mod exam;
+pub mod affair;
+pub mod stats;
+pub mod backup;
+pub mod config;
+pub mod subject;
