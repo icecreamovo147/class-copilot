@@ -4,13 +4,74 @@ use sqlx::Connection;
 use tauri::State;
 use std::path::Path;
 use sha2::{Sha256, Digest};
+use std::io::Write;
 
 use crate::AppState;
 
 /// 备份文件中的元数据表名
 const BACKUP_META_TABLE: &str = "_backup_meta";
+/// 校验值文件后缀（独立于备份文件，避免自指问题）
+const CHECKSUM_EXTENSION: &str = ".sha256";
+
+/// 计算整个文件的 SHA256
+async fn compute_file_sha256(file_path: &str) -> Result<String, String> {
+    let path = Path::new(file_path);
+    let data = std::fs::read(path)
+        .map_err(|e| format!("无法读取文件用于计算校验值: {}", e))?;
+    let mut hasher = Sha256::new();
+    hasher.update(&data);
+    let hash = hex::encode(hasher.finalize());
+    log::info!("File SHA256 ({}): {}", file_path, hash);
+    Ok(hash)
+}
+
+/// 将校验值写入独立文件（避免自指：校验值本身不能是备份文件的一部分）
+fn write_checksum_file(db_path: &str, checksum: &str) -> Result<(), String> {
+    let checksum_path = format!("{}{}", db_path, CHECKSUM_EXTENSION);
+    let mut file = std::fs::File::create(&checksum_path)
+        .map_err(|e| format!("无法创建校验值文件: {}", e))?;
+    file.write_all(checksum.as_bytes())
+        .map_err(|e| format!("写入校验值文件失败: {}", e))?;
+    log::info!("Checksum written to: {}", checksum_path);
+    Ok(())
+}
+
+/// 读取独立校验值文件并与当前文件对比
+async fn verify_checksum_file(db_path: &str) -> Result<String, String> {
+    let checksum_path = format!("{}{}", db_path, CHECKSUM_EXTENSION);
+    let path = Path::new(&checksum_path);
+    if !path.exists() {
+        log::warn!("校验值文件不存在: {}（可能是旧版本备份），跳过校验比对", checksum_path);
+        return Ok(String::new());
+    }
+    let stored = std::fs::read_to_string(path)
+        .map_err(|e| format!("读取校验值文件失败: {}", e))?
+        .trim()
+        .to_string();
+    if stored.is_empty() {
+        log::warn!("校验值文件为空，跳过校验比对");
+        return Ok(String::new());
+    }
+    // 重新计算当前文件的 SHA256
+    let current = compute_file_sha256(db_path).await?;
+    if stored != current {
+        return Err(format!(
+            "备份文件校验失败：当前 SHA256 ({}) 与校验文件 ({}) 不匹配，文件可能已损坏或被篡改",
+            &current[..16], &stored[..16]
+        ));
+    }
+    log::info!("Checksum verified: {} (matches .sha256 file)", &stored[..16]);
+    Ok(current)
+}
+
+/// 清理校验值文件
+fn remove_checksum_file(db_path: &str) {
+    let checksum_path = format!("{}{}", db_path, CHECKSUM_EXTENSION);
+    let _ = std::fs::remove_file(&checksum_path);
+}
 
 /// 校验备份文件是否为有效的 SQLite 数据库，并检查基本结构
+/// 返回当前文件的 SHA256 值
 async fn validate_backup_file(file_path: &str) -> Result<String, String> {
     let path = Path::new(file_path);
     if !path.exists() {
@@ -29,10 +90,14 @@ async fn validate_backup_file(file_path: &str) -> Result<String, String> {
         return Err("备份文件不是有效的 SQLite 数据库".to_string());
     }
 
-    // 计算文件 SHA256 校验值
-    let mut hasher = Sha256::new();
-    hasher.update(&header);
-    let hash = hex::encode(hasher.finalize());
+    // 🔑 通过独立 .sha256 文件验证完整性（避免自指：校验值存储在备份文件外部）
+    let checksum = verify_checksum_file(file_path).await?;
+    if !checksum.is_empty() {
+        log::info!("Checksum verified: {} (from .sha256 file)", &checksum[..16]);
+    }
+
+    // 计算当前文件 SHA256 用于返回
+    let hash = compute_file_sha256(file_path).await?;
     log::info!("Backup file SHA256: {}", hash);
 
     // 校验备份元数据
@@ -57,9 +122,9 @@ async fn validate_backup_file(file_path: &str) -> Result<String, String> {
         return Ok(hash);
     }
 
-    // 读取元数据（含校验值）
-    let meta: (String, String, i64, Option<String>) = sqlx::query_as(
-        "SELECT backup_version, backup_time, table_count, checksum FROM _backup_meta LIMIT 1"
+    // 读取元数据（版本、时间、表数量）
+    let meta: (String, String, i64) = sqlx::query_as(
+        "SELECT backup_version, backup_time, table_count FROM _backup_meta LIMIT 1"
     )
     .fetch_one(&mut conn)
     .await
@@ -69,19 +134,6 @@ async fn validate_backup_file(file_path: &str) -> Result<String, String> {
         "Backup version: {}, time: {}, tables: {}",
         meta.0, meta.1, meta.2
     );
-
-    // 🔑 比对校验值：当前计算的 SHA256 必须与备份中存储的一致
-    if let Some(stored_checksum) = &meta.3 {
-        if !stored_checksum.is_empty() && stored_checksum != &hash {
-            return Err(format!(
-                "备份文件校验失败：当前 SHA256 ({}) 与备份记录 ({}) 不匹配，文件可能已损坏或被篡改",
-                &hash[..16], &stored_checksum[..16]
-            ));
-        }
-        log::info!("Checksum verified: {} (matches stored)", &hash[..16]);
-    } else {
-        log::warn!("备份元数据中缺少校验值，跳过校验比对");
-    }
 
     // 🔑 执行 PRAGMA integrity_check 验证数据库内部结构完整性
     let integrity: (String,) = sqlx::query_as("PRAGMA integrity_check")
@@ -173,8 +225,9 @@ fn get_insert_order() -> &'static [&'static str] {
     ]
 }
 
-/// 在备份文件中写入元数据（备份版本、时间、表数量、校验值）
-async fn write_backup_meta(pool: &sqlx::SqlitePool, file_path: &str, checksum: &str) -> Result<(), String> {
+/// 在备份文件中写入元数据（备份版本、时间、表数量）
+/// 校验值不写入备份文件本身，而是写入独立的 .sha256 文件，避免自指问题
+async fn write_backup_meta(pool: &sqlx::SqlitePool, file_path: &str) -> Result<(), String> {
     let conn_opts = format!("sqlite://{}", file_path);
     let opts: sqlx::sqlite::SqliteConnectOptions = conn_opts.parse()
         .map_err(|e| format!("无法连接备份文件写入元数据: {}", e))?;
@@ -193,7 +246,7 @@ async fn write_backup_meta(pool: &sqlx::SqlitePool, file_path: &str, checksum: &
     let now = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
     sqlx::query(&format!(
-        "CREATE TABLE IF NOT EXISTS {} (backup_version TEXT, backup_time TEXT, table_count INTEGER, checksum TEXT)",
+        "CREATE TABLE IF NOT EXISTS {} (backup_version TEXT, backup_time TEXT, table_count INTEGER)",
         BACKUP_META_TABLE
     ))
     .execute(&mut conn)
@@ -201,13 +254,12 @@ async fn write_backup_meta(pool: &sqlx::SqlitePool, file_path: &str, checksum: &
     .map_err(|e| format!("创建元数据表失败: {}", e))?;
 
     sqlx::query(&format!(
-        "INSERT INTO {} (backup_version, backup_time, table_count, checksum) VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO {} (backup_version, backup_time, table_count) VALUES (?1, ?2, ?3)",
         BACKUP_META_TABLE
     ))
     .bind("1.0.0")
     .bind(&now)
     .bind(table_count.0)
-    .bind(checksum)
     .execute(&mut conn)
     .await
     .map_err(|e| format!("写入备份元数据失败: {}", e))?;
@@ -219,7 +271,7 @@ async fn write_backup_meta(pool: &sqlx::SqlitePool, file_path: &str, checksum: &
 pub async fn create_backup(state: State<'_, AppState>, file_path: String) -> Result<(), String> {
     let pool = &state.db;
 
-    // 对文件路径做基本转义防注入
+    // Step 1: 使用 VACUUM INTO 创建备份文件（仅含业务数据）
     let escaped_path = file_path.replace('\'', "''");
     let backup_sql = format!("VACUUM INTO '{}'", escaped_path);
     sqlx::query(&backup_sql)
@@ -237,11 +289,15 @@ pub async fn create_backup(state: State<'_, AppState>, file_path: String) -> Res
         return Err("备份文件为空".to_string());
     }
 
-    // 校验备份完整性并获取校验值
-    let checksum = validate_backup_file(&file_path).await?;
+    // Step 2: 写入元数据（版本/时间/表数量，不含校验值）
+    write_backup_meta(pool, &file_path).await?;
 
-    // 在备份文件中写入元数据
-    write_backup_meta(pool, &file_path, &checksum).await?;
+    // Step 3: 对整个文件（含 _backup_meta 表）计算 SHA256
+    let checksum = compute_file_sha256(&file_path).await?;
+
+    // Step 4: 将校验值写入独立文件 {file_path}.sha256
+    //        校验值不在备份文件内部 → 写入校验值不会改备份文件 → 没有自指问题
+    write_checksum_file(&file_path, &checksum)?;
 
     log::info!("Backup created successfully at: {} (checksum: {})", file_path, checksum);
     Ok(())

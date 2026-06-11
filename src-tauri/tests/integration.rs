@@ -2,8 +2,11 @@
 // 使用方法：cargo test -- --nocapture
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::{SqlitePool, Row, Connection};
+use sqlx::{SqlitePool, Connection};
 use std::str::FromStr;
+use std::sync::Arc;
+use class_copilot_lib::AppState;
+use class_copilot_lib::commands::backup;
 
 /// 创建测试用内存数据库，包含完整表结构
 async fn create_test_db() -> SqlitePool {
@@ -197,10 +200,21 @@ async fn verify_data_integrity(pool: &SqlitePool, cohort_id: i64) -> bool {
     true
 }
 
-/// 创建测试用文件数据库
-async fn create_test_file_db() -> SqlitePool {
+/// 从 SqlitePool 构造 tauri::State<AppState>（仅测试用）
+/// tauri v2 中 State 没有公开构造函数，通过 transmute 绕过
+fn make_app_state(pool: SqlitePool) -> tauri::State<'static, AppState> {
+    let leaked: &'static AppState = Box::leak(Box::new(AppState {
+        db: pool,
+        app_handle: Arc::new(tokio::sync::Mutex::new(None)),
+    }));
+    // SAFETY: State 内部只是一个引用包装，leaked 生命周期为 'static，使用安全
+    unsafe { std::mem::transmute(leaked) }
+}
+
+/// 创建测试用文件数据库（每个测试必须传入唯一的 name，避免并行测试竞争同一文件）
+async fn create_test_file_db(name: &str) -> SqlitePool {
     let temp_dir = std::env::temp_dir();
-    let db_path = temp_dir.join(format!("test_backup_source_{}.db", std::process::id()));
+    let db_path = temp_dir.join(format!("test_backup_{}_{}.db", name, std::process::id()));
     let _ = std::fs::remove_file(&db_path);
 
     let conn_options = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
@@ -328,39 +342,35 @@ async fn create_test_file_db() -> SqlitePool {
     pool
 }
 
-// ==================== 测试: 备份真实往返（使用文件数据库） ====================
+// ==================== 测试: 备份真实往返（调用生产命令 create_backup + restore_backup） ====================
 #[tokio::test]
 async fn test_backup_round_trip() {
-    // 使用文件数据库（VACUUM INTO 不支持内存数据库）
-    let pool = create_test_file_db().await;
+    let pool = create_test_file_db("roundtrip").await;
     let (cohort_id, _) = seed_test_data(&pool).await;
-
-    // 验证初始数据
     assert!(verify_data_integrity(&pool, cohort_id).await, "初始数据完整");
 
-    // 确保 WAL 数据写入主文件（VACUUM INTO 需要）
+    // 确保 WAL 数据写入主文件
     sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
         .execute(&pool).await.unwrap();
 
-    // Step 1: 用 VACUUM INTO 创建备份
     let temp_dir = std::env::temp_dir();
     let backup_path = temp_dir.join(format!("test_backup_roundtrip_{}.db", std::process::id()));
     let backup_str = backup_path.to_string_lossy().to_string();
-
-    // 清理旧的备份文件
     let _ = std::fs::remove_file(&backup_path);
 
-    let escaped = backup_str.replace('\'', "''");
-    sqlx::query(&format!("VACUUM INTO '{}'", escaped))
-        .execute(&pool)
+    // Step 1: 调用生产命令 create_backup 创建备份
+    let state = make_app_state(pool.clone());
+    backup::create_backup(state, backup_str.clone())
         .await
-        .expect("VACUUM INTO should succeed");
+        .expect("create_backup should succeed");
 
     assert!(backup_path.exists(), "备份文件应该存在");
-    let backup_size = std::fs::metadata(&backup_path).unwrap().len();
-    assert!(backup_size > 0, "备份文件不应为空");
 
-    // Step 2: 校验备份文件可读且包含正确数据
+    // 验证 .sha256 校验值文件也被创建
+    let checksum_path = format!("{}.sha256", backup_str);
+    assert!(std::path::Path::new(&checksum_path).exists(), ".sha256 校验值文件应该存在");
+
+    // Step 2: 验证备份文件中的数据
     let conn_opts = format!("sqlite://{}?mode=ro", backup_str);
     let opts: SqliteConnectOptions = conn_opts.parse().unwrap();
     let mut backup_conn = sqlx::SqliteConnection::connect_with(&opts).await.unwrap();
@@ -368,23 +378,18 @@ async fn test_backup_round_trip() {
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cohort")
         .fetch_one(&mut backup_conn).await.unwrap();
     assert_eq!(count.0, 1, "备份中应有1个届次");
-
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM student")
         .fetch_one(&mut backup_conn).await.unwrap();
     assert_eq!(count.0, 1, "备份中应有1个学生");
-
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM homework")
         .fetch_one(&mut backup_conn).await.unwrap();
     assert_eq!(count.0, 1, "备份中应有1个作业");
-
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM homework_record")
         .fetch_one(&mut backup_conn).await.unwrap();
     assert_eq!(count.0, 1, "备份中应有1个作业记录");
-
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM attendance")
         .fetch_one(&mut backup_conn).await.unwrap();
     assert_eq!(count.0, 1, "备份中应有1个考勤记录");
-
     drop(backup_conn);
 
     // Step 3: 创建新的空文件数据库做恢复目标
@@ -395,7 +400,6 @@ async fn test_backup_round_trip() {
     let restore_pool = SqlitePoolOptions::new().max_connections(2)
         .connect_with(restore_opts).await.unwrap();
 
-    // 在恢复目标中创建相同的表结构
     let create_tables = vec![
         "CREATE TABLE IF NOT EXISTS cohort (id INTEGER PRIMARY KEY AUTOINCREMENT, cohort_name TEXT NOT NULL, class_name TEXT NOT NULL, status TEXT NOT NULL DEFAULT '使用中', is_current INTEGER NOT NULL DEFAULT 0, archive_time TEXT, remark TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);",
         "CREATE TABLE IF NOT EXISTS student (id INTEGER PRIMARY KEY AUTOINCREMENT, cohort_id INTEGER NOT NULL, name TEXT NOT NULL, student_no TEXT NOT NULL, gender TEXT, phone TEXT, parent_name TEXT, parent_phone TEXT, address TEXT, group_name TEXT, status TEXT NOT NULL DEFAULT '正常', is_focus INTEGER NOT NULL DEFAULT 0, remark TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT, UNIQUE(cohort_id, student_no), FOREIGN KEY(cohort_id) REFERENCES cohort(id));",
@@ -414,49 +418,17 @@ async fn test_backup_round_trip() {
         sqlx::query(m).execute(&restore_pool).await.unwrap();
     }
 
-    // 确保恢复池里没有数据
     let empty_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cohort")
         .fetch_one(&restore_pool).await.unwrap();
     assert_eq!(empty_count.0, 0, "恢复前目标应为空");
 
-    // Step 4: 执行恢复（模拟 restore_backup 的核心逻辑）
-    let mut conn = restore_pool.acquire().await.unwrap();
-    sqlx::query(&format!("ATTACH DATABASE '{}' AS backup_db", escaped))
-        .execute(&mut *conn).await.unwrap();
+    // Step 4: 调用生产命令 restore_backup 执行恢复
+    let restore_state = make_app_state(restore_pool.clone());
+    backup::restore_backup(restore_state, backup_str.clone())
+        .await
+        .expect("restore_backup should succeed");
 
-    // 关闭FK
-    sqlx::query("PRAGMA foreign_keys = OFF")
-        .execute(&mut *conn).await.unwrap();
-
-    let insert_order = [
-        "cohort", "system_config", "student", "subject", "homework",
-        "homework_record", "exam", "score", "attendance", "notice", "duty", "behavior_record",
-    ];
-
-    for table in &insert_order {
-        let exists: (i64,) = sqlx::query_as(
-            &format!("SELECT COUNT(*) FROM backup_db.sqlite_master WHERE type='table' AND name='{}'", table)
-        ).fetch_one(&mut *conn).await.unwrap();
-        if exists.0 > 0 {
-            let row_count: (i64,) = sqlx::query_as(
-                &format!("SELECT COUNT(*) FROM backup_db.\"{}\"", table)
-            ).fetch_one(&mut *conn).await.unwrap();
-            if row_count.0 > 0 {
-                sqlx::query(&format!(
-                    "INSERT INTO main.\"{}\" SELECT * FROM backup_db.\"{}\"",
-                    table, table
-                )).execute(&mut *conn).await.unwrap();
-            }
-        }
-    }
-
-    sqlx::query("PRAGMA foreign_keys = ON")
-        .execute(&mut *conn).await.unwrap();
-    sqlx::query("DETACH DATABASE backup_db")
-        .execute(&mut *conn).await.ok();
-    drop(conn);
-
-    // Step 5: 验证恢复后数据完整（逐项检查）
+    // Step 5: 验证恢复后数据完整
     let (c_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cohort WHERE id = ?1")
         .bind(cohort_id).fetch_one(&restore_pool).await.unwrap();
     assert_eq!(c_count, 1, "恢复后应有1个届次，实际: {}", c_count);
@@ -480,6 +452,7 @@ async fn test_backup_round_trip() {
 
     // 清理
     let _ = std::fs::remove_file(&backup_path);
+    let _ = std::fs::remove_file(&checksum_path);
     let _ = std::fs::remove_file(&restore_db_path);
 }
 
@@ -690,7 +663,7 @@ async fn test_atomic_import_all_or_nothing() {
 // ==================== 测试: 备份校验值比对 + PRAGMA integrity_check ====================
 #[tokio::test]
 async fn test_backup_checksum_verification_and_integrity() {
-    let pool = create_test_file_db().await;
+    let pool = create_test_file_db("chksum").await;
     let (cohort_id, _) = seed_test_data(&pool).await;
     assert!(verify_data_integrity(&pool, cohort_id).await);
 
@@ -756,7 +729,7 @@ async fn test_backup_checksum_verification_and_integrity() {
 async fn test_detect_duplicate_student_no_in_batch() {
     let pool = create_test_db().await;
     let now = now_str();
-    let cohort_id: (i64,) = sqlx::query_as(
+    let _cohort_id: (i64,) = sqlx::query_as(
         "INSERT INTO cohort (cohort_name, class_name, status, is_current, created_at, updated_at)
          VALUES ('测试', '1班', '使用中', 1, ?1, ?1) RETURNING id"
     ).bind(&now).fetch_one(&pool).await.unwrap();

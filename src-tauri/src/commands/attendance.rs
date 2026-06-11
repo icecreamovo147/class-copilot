@@ -307,19 +307,38 @@ pub async fn export_attendance_excel(
     state: State<'_, AppState>,
     cohort_id: i64,
     file_path: String,
-    _start_date: Option<String>,
-    _end_date: Option<String>,
+    start_date: Option<String>,
+    end_date: Option<String>,
 ) -> Result<(), String> {
     let pool = &state.db;
     use sqlx::Row;
-    let rows = sqlx::query(
-        "SELECT a.attendance_date, s.name, s.student_no, a.status, a.reason
-         FROM attendance a JOIN student s ON a.student_id = s.id
-         WHERE a.cohort_id = ?1 AND s.deleted_at IS NULL
-         ORDER BY a.attendance_date DESC, s.student_no ASC"
-    )
-    .bind(cohort_id)
-    .fetch_all(pool).await.map_err(|e| e.to_string())?;
+
+    // 按日期范围导出（如果传了 start_date/end_date 就筛选，否则导出全部）
+    let use_range = start_date.is_some() && end_date.is_some();
+    let rows = if use_range {
+        let start = start_date.unwrap();
+        let end = end_date.unwrap();
+        sqlx::query(
+            "SELECT a.attendance_date, s.name, s.student_no, a.status, a.reason
+             FROM attendance a JOIN student s ON a.student_id = s.id
+             WHERE a.cohort_id = ?1 AND s.deleted_at IS NULL
+               AND a.attendance_date >= ?2 AND a.attendance_date <= ?3
+             ORDER BY a.attendance_date DESC, s.student_no ASC"
+        )
+        .bind(cohort_id)
+        .bind(&start)
+        .bind(&end)
+        .fetch_all(pool).await.map_err(|e| e.to_string())?
+    } else {
+        sqlx::query(
+            "SELECT a.attendance_date, s.name, s.student_no, a.status, a.reason
+             FROM attendance a JOIN student s ON a.student_id = s.id
+             WHERE a.cohort_id = ?1 AND s.deleted_at IS NULL
+             ORDER BY a.attendance_date DESC, s.student_no ASC"
+        )
+        .bind(cohort_id)
+        .fetch_all(pool).await.map_err(|e| e.to_string())?
+    };
 
     use rust_xlsxwriter::*;
     let mut workbook = Workbook::new();

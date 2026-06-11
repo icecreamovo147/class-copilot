@@ -124,6 +124,8 @@ export const homeworkService = {
 
   getRecords: (homeworkId: number) => cmd<HomeworkRecord[]>('get_homework_records', { homework_id: homeworkId }),
 
+  getStudentRecords: (studentId: number) => cmd<HomeworkRecord[]>('get_student_homework_records', { student_id: studentId }),
+
   updateRecord: (recordId: number, status: string, remark?: string) =>
     cmd<void>('update_homework_record', { id: recordId, status, remark }),
 

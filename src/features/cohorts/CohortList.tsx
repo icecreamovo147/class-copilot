@@ -24,6 +24,23 @@ export default function CohortList() {
     queryFn: () => cohortService.list(),
   });
 
+  // 筛选状态
+  const [searchName, setSearchName] = useState('');
+  const [filterStatus, setFilterStatus] = useState<string | undefined>();
+  const [filterYear, setFilterYear] = useState<number | undefined>();
+
+  const filteredCohorts = (cohorts || []).filter((c) => {
+    if (searchName) {
+      const kw = searchName.toLowerCase();
+      if (!c.cohort_name.toLowerCase().includes(kw) && !c.class_name.toLowerCase().includes(kw)) {
+        return false;
+      }
+    }
+    if (filterStatus && c.status !== filterStatus) return false;
+    if (filterYear && c.admission_year !== filterYear) return false;
+    return true;
+  });
+
   const createMutation = useMutation({
     mutationFn: (data: Partial<Cohort>) => cohortService.create(data),
     onSuccess: async (createdCohort) => {
@@ -175,9 +192,39 @@ export default function CohortList() {
         </Button>
       </div>
 
+      <Card size="small" style={{ marginBottom: 16 }}>
+        <Space wrap>
+          <Input
+            placeholder="搜索届次/班级名称"
+            allowClear
+            style={{ width: 200 }}
+            value={searchName}
+            onChange={(e) => setSearchName(e.target.value)}
+          />
+          <Select
+            placeholder="状态筛选"
+            allowClear
+            style={{ width: 140 }}
+            value={filterStatus}
+            onChange={setFilterStatus}
+            options={[
+              { value: '使用中', label: '使用中' },
+              { value: '已归档', label: '已归档' },
+            ]}
+          />
+          <Input
+            placeholder="入学年份"
+            type="number"
+            style={{ width: 120 }}
+            value={filterYear || ''}
+            onChange={(e) => setFilterYear(e.target.value ? Number(e.target.value) : undefined)}
+          />
+        </Space>
+      </Card>
+
       <Card>
         <Table
-          dataSource={cohorts || []}
+          dataSource={filteredCohorts}
           columns={columns}
           rowKey="id"
           loading={isLoading}

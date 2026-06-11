@@ -1,4 +1,4 @@
-mod commands;
+pub mod commands;
 mod db;
 
 use sqlx::SqlitePool;
@@ -73,6 +73,7 @@ pub fn run() {
             commands::homework::update_homework,
             commands::homework::delete_homework,
             commands::homework::get_homework_records,
+            commands::homework::get_student_homework_records,
             commands::homework::update_homework_record,
             commands::homework::batch_update_homework_records,
             commands::homework::export_incomplete_homework,

@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Card, Table, Button, Modal, Form, Input, Select, DatePicker, message, Space, Tag, Typography, Tabs, Row, Col, Descriptions, Empty } from 'antd';
-import { PlusOutlined, UploadOutlined } from '@ant-design/icons';
+import { Card, Table, Button, Modal, Form, Input, Select, DatePicker, message, Space, Tag, Typography, Tabs, Row, Col, Descriptions, Empty, Popconfirm } from 'antd';
+import { PlusOutlined, UploadOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAppStore } from '@/app/store';
 import { examService, scoreService, studentService, subjectService } from '@/services';
-import type { Exam } from '@/types';
+import type { Exam, Subject } from '@/types';
+import dayjs from 'dayjs';
 
 const { Title } = Typography;
 
@@ -16,8 +17,11 @@ export default function ScoreManagement() {
   const [selectedExamId, setSelectedExamId] = useState<number | null>(null);
   const [selectedSubjectId, setSelectedSubjectId] = useState<number | null>(null);
   const [scoreModalVisible, setScoreModalVisible] = useState(false);
+  const [subjectModalVisible, setSubjectModalVisible] = useState(false);
+  const [editingSubject, setEditingSubject] = useState<Subject | null>(null);
   const [examForm] = Form.useForm();
   const [scoreForm] = Form.useForm();
+  const [subjectForm] = Form.useForm();
 
   const { data: exams, isLoading: examsLoading } = useQuery({
     queryKey: ['exams', currentCohort?.id],
@@ -65,6 +69,58 @@ export default function ScoreManagement() {
     onError: (err: Error) => message.error(err.message),
   });
 
+  const updateExamMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: Partial<Exam> }) => examService.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['exams'] });
+      message.success('考试更新成功');
+      setExamModalVisible(false);
+      examForm.resetFields();
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+
+  const deleteExamMutation = useMutation({
+    mutationFn: (id: number) => examService.delete(id),
+    onSuccess: (_: void, id: number) => {
+      queryClient.invalidateQueries({ queryKey: ['exams'] });
+      message.success('考试已删除');
+      if (selectedExamId === id) { setSelectedExamId(null); setSelectedSubjectId(null); }
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+
+  const createSubjectMutation = useMutation({
+    mutationFn: (data: Partial<Subject>) => subjectService.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['subjects'] });
+      message.success('科目创建成功');
+      setSubjectModalVisible(false);
+      subjectForm.resetFields();
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+
+  const updateSubjectMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: Partial<Subject> }) => subjectService.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['subjects'] });
+      message.success('科目更新成功');
+      setSubjectModalVisible(false);
+      subjectForm.resetFields();
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+
+  const deleteSubjectMutation = useMutation({
+    mutationFn: (id: number) => subjectService.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['subjects'] });
+      message.success('科目已删除');
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+
   const saveScoresMutation = useMutation({
     mutationFn: (scoresData: Array<{ student_id: number; score_value: number | null }>) =>
       scoreService.save(selectedExamId!, selectedSubjectId!, scoresData),
@@ -80,11 +136,50 @@ export default function ScoreManagement() {
 
   const handleCreateExam = async () => {
     const values = await examForm.validateFields();
-    createExamMutation.mutate({
+    const payload = {
       ...values,
       cohort_id: currentCohort!.id,
       exam_date: values.exam_date?.format('YYYY-MM-DD'),
+    };
+    if (editingExam) {
+      updateExamMutation.mutate({ id: editingExam.id, data: payload });
+    } else {
+      createExamMutation.mutate(payload);
+    }
+  };
+
+  const handleEditExam = (exam: Exam) => {
+    setEditingExam(exam);
+    examForm.setFieldsValue({
+      name: exam.name,
+      exam_type: exam.exam_type,
+      exam_date: exam.exam_date ? dayjs(exam.exam_date) : null,
+      remark: exam.remark,
     });
+    setExamModalVisible(true);
+  };
+
+  const handleDeleteExam = (id: number) => {
+    deleteExamMutation.mutate(id);
+  };
+
+  const handleCreateSubject = async () => {
+    const values = await subjectForm.validateFields();
+    if (editingSubject) {
+      updateSubjectMutation.mutate({ id: editingSubject.id, data: values });
+    } else {
+      createSubjectMutation.mutate(values);
+    }
+  };
+
+  const handleEditSubject = (subject: Subject) => {
+    setEditingSubject(subject);
+    subjectForm.setFieldsValue({ name: subject.name, sort_order: subject.sort_order, remark: subject.remark });
+    setSubjectModalVisible(true);
+  };
+
+  const handleDeleteSubject = (id: number) => {
+    deleteSubjectMutation.mutate(id);
   };
 
   const handleSaveScores = async () => {
@@ -128,10 +223,38 @@ export default function ScoreManagement() {
     {
       title: '操作',
       key: 'action',
+      width: 240,
       render: (_: unknown, record: Exam) => (
-        <Button type="link" onClick={() => setSelectedExamId(record.id)}>
-          选择
-        </Button>
+        <Space size="small">
+          <Button type="link" size="small" onClick={() => setSelectedExamId(record.id)}>选择</Button>
+          {!isReadonly && (
+            <>
+              <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEditExam(record)}>编辑</Button>
+              <Popconfirm title="删除考试会同时删除该考试的所有成绩数据，确认删除？" onConfirm={() => handleDeleteExam(record.id)}>
+                <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
+              </Popconfirm>
+            </>
+          )}
+        </Space>
+      ),
+    },
+  ];
+
+  const subjectColumns = [
+    { title: '科目名称', dataIndex: 'name', key: 'name' },
+    { title: '排序', dataIndex: 'sort_order', key: 'sort_order', width: 80 },
+    { title: '备注', dataIndex: 'remark', key: 'remark', ellipsis: true, render: (v: string | null) => v || '-' },
+    {
+      title: '操作',
+      key: 'action',
+      width: 180,
+      render: (_: unknown, record: Subject) => (
+        <Space size="small">
+          <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEditSubject(record)}>编辑</Button>
+          <Popconfirm title="确认删除该科目？" onConfirm={() => handleDeleteSubject(record.id)}>
+            <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
+          </Popconfirm>
+        </Space>
       ),
     },
   ];
@@ -167,7 +290,7 @@ export default function ScoreManagement() {
   const tabItems = [
     {
       key: 'exams',
-      label: '考试列表',
+      label: '考试管理',
       children: (
         <div>
           {!isReadonly && (
@@ -180,6 +303,23 @@ export default function ScoreManagement() {
             columns={examColumns}
             rowKey="id"
             loading={examsLoading}
+            pagination={false}
+          />
+        </div>
+      ),
+    },
+    {
+      key: 'subjects',
+      label: '科目管理',
+      children: (
+        <div>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditingSubject(null); subjectForm.resetFields(); setSubjectModalVisible(true); }} style={{ marginBottom: 16 }}>
+            新增科目
+          </Button>
+          <Table
+            dataSource={subjects || []}
+            columns={subjectColumns}
+            rowKey="id"
             pagination={false}
           />
         </div>
@@ -300,8 +440,8 @@ export default function ScoreManagement() {
         title={editingExam ? '编辑考试' : '创建考试'}
         open={examModalVisible}
         onOk={handleCreateExam}
-        onCancel={() => setExamModalVisible(false)}
-        confirmLoading={createExamMutation.isPending}
+        onCancel={() => { setExamModalVisible(false); setEditingExam(null); }}
+        confirmLoading={createExamMutation.isPending || updateExamMutation.isPending}
       >
         <Form form={examForm} layout="vertical">
           <Form.Item name="name" label="考试名称" rules={[{ required: true, message: '请输入考试名称' }]}>
@@ -324,6 +464,26 @@ export default function ScoreManagement() {
               </Form.Item>
             </Col>
           </Row>
+          <Form.Item name="remark" label="备注">
+            <Input.TextArea rows={2} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={editingSubject ? '编辑科目' : '新增科目'}
+        open={subjectModalVisible}
+        onOk={handleCreateSubject}
+        onCancel={() => { setSubjectModalVisible(false); setEditingSubject(null); }}
+        confirmLoading={createSubjectMutation.isPending || updateSubjectMutation.isPending}
+      >
+        <Form form={subjectForm} layout="vertical">
+          <Form.Item name="name" label="科目名称" rules={[{ required: true, message: '请输入科目名称' }]}>
+            <Input placeholder="如：数学" />
+          </Form.Item>
+          <Form.Item name="sort_order" label="排序序号" tooltip="数字越小越靠前">
+            <Input type="number" placeholder="0" />
+          </Form.Item>
           <Form.Item name="remark" label="备注">
             <Input.TextArea rows={2} />
           </Form.Item>

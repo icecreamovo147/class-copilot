@@ -1,18 +1,45 @@
-
 import { Card, Descriptions, Tabs, Table, Tag, Typography, Spin, Alert, Empty } from 'antd';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { statisticsService } from '@/services';
-
+import { statisticsService, homeworkService, attendanceService } from '@/services';
 const { Title } = Typography;
+
+const statusColors: Record<string, string> = {
+  '正常': 'green', '迟到': 'orange', '早退': 'gold', '请假': 'blue', '旷课': 'red',
+};
+
+const hwStatusColors: Record<string, string> = {
+  '已完成': 'green', '未完成': 'red', '未登记': 'default', '迟交': 'orange', '补交': 'gold', '质量较差': 'magenta',
+};
 
 export default function StudentDetail() {
   const { id } = useParams<{ id: string }>();
+  const studentId = Number(id);
 
   const { data: profile, isLoading, error } = useQuery({
-    queryKey: ['studentProfile', Number(id)],
-    queryFn: () => statisticsService.studentProfile(Number(id)),
+    queryKey: ['studentProfile', studentId],
+    queryFn: () => statisticsService.studentProfile(studentId),
     enabled: !!id,
+  });
+
+  // 单独获取作业记录明细（明细页才需展示）
+  const { data: homeworkRecords } = useQuery({
+    queryKey: ['studentHomeworkRecords', studentId],
+    queryFn: () => homeworkService.getStudentRecords(studentId),
+    enabled: !!id,
+  });
+
+  // 单独获取考勤记录明细
+  const { data: attendanceRecords } = useQuery({
+    queryKey: ['studentAttendanceRecords', studentId],
+    queryFn: async () => {
+      const result = await attendanceService.query(
+        profile!.student.cohort_id,
+        { student_id: studentId, page: 1, page_size: 1000 }
+      );
+      return result.data;
+    },
+    enabled: !!profile,
   });
 
   if (isLoading) return <Spin size="large" style={{ display: 'block', textAlign: 'center', marginTop: 100 }} />;
@@ -35,6 +62,25 @@ export default function StudentDetail() {
           {profile.homework.consecutive_incomplete > 0 && (
             <Tag color="red" style={{ marginBottom: 8 }}>连续未交 {profile.homework.consecutive_incomplete} 次</Tag>
           )}
+          <Table
+            dataSource={homeworkRecords || []}
+            columns={[
+              { title: '作业标题', dataIndex: 'homework_title', key: 'homework_title' },
+              { title: '发布日期', dataIndex: 'publish_date', key: 'publish_date', width: 120 },
+              { title: '科目', dataIndex: 'subject_name', key: 'subject_name', width: 100, render: (v: string | null) => v || '-' },
+              {
+                title: '状态',
+                dataIndex: 'status',
+                key: 'status',
+                width: 100,
+                render: (s: string) => <Tag color={hwStatusColors[s] || 'default'}>{s}</Tag>,
+              },
+              { title: '提交时间', dataIndex: 'submit_time', key: 'submit_time', width: 140, render: (v: string | null) => v || '-' },
+            ]}
+            rowKey="id"
+            size="small"
+            pagination={false}
+          />
         </div>
       ),
     },
@@ -42,12 +88,32 @@ export default function StudentDetail() {
       key: 'attendance',
       label: '考勤记录',
       children: (
-        <Descriptions column={4} bordered size="small">
-          <Descriptions.Item label="总天数">{profile.attendance.total}</Descriptions.Item>
-          <Descriptions.Item label="正常">{profile.attendance.normal}</Descriptions.Item>
-          <Descriptions.Item label="异常">{profile.attendance.abnormal}</Descriptions.Item>
-          <Descriptions.Item label="出勤率">{(profile.attendance.rate * 100).toFixed(1)}%</Descriptions.Item>
-        </Descriptions>
+        <div>
+          <Descriptions column={4} bordered size="small" style={{ marginBottom: 16 }}>
+            <Descriptions.Item label="总天数">{profile.attendance.total}</Descriptions.Item>
+            <Descriptions.Item label="正常">{profile.attendance.normal}</Descriptions.Item>
+            <Descriptions.Item label="异常">{profile.attendance.abnormal}</Descriptions.Item>
+            <Descriptions.Item label="出勤率">{(profile.attendance.rate * 100).toFixed(1)}%</Descriptions.Item>
+          </Descriptions>
+          <Table
+            dataSource={attendanceRecords || []}
+            columns={[
+              { title: '日期', dataIndex: 'attendance_date', key: 'attendance_date', width: 120 },
+              {
+                title: '状态',
+                dataIndex: 'status',
+                key: 'status',
+                width: 80,
+                render: (s: string) => <Tag color={statusColors[s] || 'default'}>{s}</Tag>,
+              },
+              { title: '原因', dataIndex: 'reason', key: 'reason', ellipsis: true },
+              { title: '备注', dataIndex: 'remark', key: 'remark', ellipsis: true },
+            ]}
+            rowKey="id"
+            size="small"
+            pagination={false}
+          />
+        </div>
       ),
     },
     {

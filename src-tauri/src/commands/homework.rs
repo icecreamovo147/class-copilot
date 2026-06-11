@@ -286,6 +286,45 @@ pub async fn get_homework_records(
     }).collect())
 }
 
+/// 按学生 ID 查询该学生的所有作业记录明细（含作业名称、科目等信息）
+#[tauri::command]
+pub async fn get_student_homework_records(
+    state: State<'_, AppState>,
+    student_id: i64,
+) -> Result<Vec<serde_json::Value>, String> {
+    let pool = &state.db;
+    let rows = sqlx::query(
+        "SELECT hr.id, hr.homework_id, hr.student_id, hr.status, hr.submit_time, hr.remark,
+                hw.title as homework_title, hw.publish_date, hw.subject_name,
+                s.name as student_name, s.student_no
+         FROM homework_record hr
+         JOIN homework hw ON hr.homework_id = hw.id
+         JOIN student s ON hr.student_id = s.id
+         WHERE hr.student_id = ?1 AND hw.deleted_at IS NULL AND s.deleted_at IS NULL
+         ORDER BY hw.publish_date DESC"
+    )
+    .bind(student_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(rows.iter().map(|r| {
+        serde_json::json!({
+            "id": r.get::<i64, _>("id"),
+            "homework_id": r.get::<i64, _>("homework_id"),
+            "student_id": r.get::<i64, _>("student_id"),
+            "status": r.get::<String, _>("status"),
+            "submit_time": r.get::<Option<String>, _>("submit_time"),
+            "remark": r.get::<Option<String>, _>("remark"),
+            "homework_title": r.get::<String, _>("homework_title"),
+            "publish_date": r.get::<String, _>("publish_date"),
+            "subject_name": r.get::<Option<String>, _>("subject_name"),
+            "student_name": r.get::<String, _>("student_name"),
+            "student_no": r.get::<String, _>("student_no")
+        })
+    }).collect())
+}
+
 #[tauri::command]
 pub async fn update_homework_record(
     state: State<'_, AppState>,

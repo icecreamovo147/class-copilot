@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Card, Table, Button, DatePicker, Select, Tag, message, Typography, Space, Empty, Descriptions, Modal, Input } from 'antd';
+import { Card, Table, Button, DatePicker, Select, Tag, message, Typography, Space, Empty, Descriptions, Modal, Input, Tabs } from 'antd';
 import { CheckCircleOutlined, DownloadOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAppStore } from '@/app/store';
@@ -9,6 +9,7 @@ import { ATTENDANCE_STATUSES } from '@/types';
 import dayjs from 'dayjs';
 
 const { Title } = Typography;
+const { RangePicker } = DatePicker;
 
 const statusColors: Record<string, string> = {
   '正常': 'green',
@@ -21,6 +22,9 @@ const statusColors: Record<string, string> = {
 export default function AttendancePage() {
   const queryClient = useQueryClient();
   const { currentCohort, isReadonly } = useAppStore();
+  const [activeTab, setActiveTab] = useState('register');
+
+  // ==================== 当日登记状态 ====================
   const [selectedDate, setSelectedDate] = useState(dayjs());
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const [page, setPage] = useState(1);
@@ -29,6 +33,14 @@ export default function AttendancePage() {
   const [editingAttendance, setEditingAttendance] = useState<Attendance | null>(null);
   const dateStr = selectedDate.format('YYYY-MM-DD');
 
+  // ==================== 历史查询状态 ====================
+  const [queryDateRange, setQueryDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
+  const [queryStudentId, setQueryStudentId] = useState<number | undefined>();
+  const [queryStatus, setQueryStatus] = useState<string | undefined>();
+  const [queryPage, setQueryPage] = useState(1);
+  const [queryPageSize, setQueryPageSize] = useState(20);
+
+  // ==================== 当日登记数据 ====================
   const { data: students } = useQuery({
     queryKey: ['allStudents', currentCohort?.id],
     queryFn: () => studentService.getAll(currentCohort!.id),
@@ -41,6 +53,24 @@ export default function AttendancePage() {
     enabled: !!currentCohort,
   });
 
+  // ==================== 历史查询数据 ====================
+  const qStart = queryDateRange?.[0]?.format('YYYY-MM-DD');
+  const qEnd = queryDateRange?.[1]?.format('YYYY-MM-DD');
+
+  const { data: queryResult, isLoading: queryLoading } = useQuery({
+    queryKey: ['attendanceQuery', currentCohort?.id, qStart, qEnd, queryStudentId, queryStatus, queryPage, queryPageSize],
+    queryFn: () => attendanceService.query(currentCohort!.id, {
+      start_date: qStart,
+      end_date: qEnd,
+      student_id: queryStudentId,
+      status: queryStatus,
+      page: queryPage,
+      page_size: queryPageSize,
+    }),
+    enabled: !!currentCohort && activeTab === 'query',
+  });
+
+  // ==================== Mutations ====================
   const saveMutation = useMutation({
     mutationFn: ({ records }: { records: Array<{ student_id: number; status: string; reason?: string; remark?: string }> }) =>
       attendanceService.saveAll(currentCohort!.id, dateStr, records),
@@ -60,7 +90,7 @@ export default function AttendancePage() {
     onError: (err: Error) => message.error(err.message),
   });
 
-  // 合并学生数据和考勤数据
+  // ==================== 当日登记逻辑 ====================
   const allRecords = (students || []).map((s) => {
     const attendance = (attendanceData || []).find((a) => a.student_id === s.id);
     return {
@@ -125,7 +155,8 @@ export default function AttendancePage() {
     setEditingAttendance(null);
   };
 
-  const handleExport = async () => {
+  // ==================== 导出逻辑 ====================
+  const handleExportDaily = async () => {
     try {
       const { save } = await import('@tauri-apps/plugin-dialog');
       const filePath = await save({
@@ -141,8 +172,29 @@ export default function AttendancePage() {
     }
   };
 
+  const handleExportQuery = async () => {
+    try {
+      const { save } = await import('@tauri-apps/plugin-dialog');
+      const rangeLabel = qStart && qEnd ? `${qStart}_${qEnd}` : '全部';
+      const filePath = await save({
+        filters: [{ name: 'Excel', extensions: ['xlsx'] }],
+        defaultPath: `考勤查询_${rangeLabel}.xlsx`,
+      });
+      if (filePath) {
+        await attendanceService.exportExcel(currentCohort!.id, filePath, {
+          start_date: qStart,
+          end_date: qEnd,
+        });
+        message.success('导出成功');
+      }
+    } catch {
+      message.error('导出失败');
+    }
+  };
+
   if (!currentCohort) return <Empty description="请先选择届次" />;
 
+  // ==================== 当日登记渲染 ====================
   const stats = {
     normal: allRecords.filter((r) => r.status === '正常').length,
     late: allRecords.filter((r) => r.status === '迟到').length,
@@ -151,7 +203,7 @@ export default function AttendancePage() {
     absent: allRecords.filter((r) => r.status === '旷课').length,
   };
 
-  const columns = [
+  const registerColumns = [
     { title: '姓名', dataIndex: 'student_name', key: 'student_name' },
     { title: '学号', dataIndex: 'student_no', key: 'student_no' },
     { title: '小组', dataIndex: 'group_name', key: 'group_name' },
@@ -176,12 +228,8 @@ export default function AttendancePage() {
     { title: '备注', dataIndex: 'remark', key: 'remark', ellipsis: true },
   ];
 
-  return (
-    <div>
-      <div className="page-header">
-        <Title level={4}>考勤请假管理</Title>
-      </div>
-
+  const registerTab = (
+    <>
       <Card size="small" style={{ marginBottom: 16 }}>
         <Space direction="vertical" style={{ width: '100%' }}>
           <Space wrap>
@@ -227,7 +275,7 @@ export default function AttendancePage() {
             全部正常
           </Button>
         )}
-        <Button icon={<DownloadOutlined />} onClick={handleExport}>
+        <Button icon={<DownloadOutlined />} onClick={handleExportDaily}>
           导出考勤
         </Button>
       </Space>
@@ -235,7 +283,7 @@ export default function AttendancePage() {
       <Card>
         <Table
           dataSource={filteredRecords}
-          columns={columns}
+          columns={registerColumns}
           rowKey="key"
           loading={isLoading}
           pagination={{
@@ -248,6 +296,108 @@ export default function AttendancePage() {
           }}
         />
       </Card>
+    </>
+  );
+
+  // ==================== 历史查询渲染 ====================
+  const queryColumns = [
+    { title: '日期', dataIndex: 'attendance_date', key: 'attendance_date', width: 120 },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      width: 100,
+      render: (s: string) => <Tag color={statusColors[s] || 'default'}>{s}</Tag>,
+    },
+    { title: '学生姓名', dataIndex: 'student_name', key: 'student_name' },
+    { title: '学号', dataIndex: 'student_no', key: 'student_no' },
+    { title: '原因', dataIndex: 'reason', key: 'reason', ellipsis: true },
+    { title: '备注', dataIndex: 'remark', key: 'remark', ellipsis: true },
+  ];
+
+  const queryTab = (
+    <>
+      <Card size="small" style={{ marginBottom: 16 }}>
+        <Space wrap>
+          <RangePicker
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            value={queryDateRange as any}
+            onChange={(dates) => {
+              setQueryDateRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null);
+              setQueryPage(1);
+            }}
+            placeholder={['开始日期', '结束日期']}
+          />
+          <Select
+            placeholder="选择学生"
+            allowClear
+            showSearch
+            style={{ width: 180 }}
+            optionFilterProp="label"
+            value={queryStudentId}
+            onChange={(val) => { setQueryStudentId(val); setQueryPage(1); }}
+            options={(students || []).map((s) => ({ value: s.id, label: `${s.name} (${s.student_no})` }))}
+          />
+          <Select
+            placeholder="状态筛选"
+            allowClear
+            style={{ width: 120 }}
+            value={queryStatus}
+            onChange={(val) => { setQueryStatus(val); setQueryPage(1); }}
+            options={ATTENDANCE_STATUSES.map((s) => ({ value: s, label: s }))}
+          />
+          <Button
+            icon={<DownloadOutlined />}
+            onClick={handleExportQuery}
+            type="primary"
+            ghost
+          >
+            导出当前筛选结果
+          </Button>
+        </Space>
+      </Card>
+
+      <Card>
+        <Table
+          dataSource={queryResult?.data || []}
+          columns={queryColumns}
+          rowKey="id"
+          loading={queryLoading}
+          pagination={{
+            current: queryPage,
+            pageSize: queryPageSize,
+            total: queryResult?.total || 0,
+            onChange: (p, ps) => { setQueryPage(p); setQueryPageSize(ps); },
+            showSizeChanger: true,
+            showTotal: (total) => `共 ${total} 条记录`,
+          }}
+        />
+      </Card>
+    </>
+  );
+
+  return (
+    <div>
+      <div className="page-header">
+        <Title level={4}>考勤管理</Title>
+      </div>
+
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        items={[
+          {
+            key: 'register',
+            label: '当日登记',
+            children: registerTab,
+          },
+          {
+            key: 'query',
+            label: '历史查询',
+            children: queryTab,
+          },
+        ]}
+      />
 
       <Modal
         title="请假登记"

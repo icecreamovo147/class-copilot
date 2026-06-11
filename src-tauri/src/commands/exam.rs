@@ -220,6 +220,33 @@ pub async fn save_scores(
     }
 
     tx.commit().await.map_err(|e| e.to_string())?;
+
+    // 保存完成后重新计算该考试+科目的排名并写入 rank_no
+    recompute_rankings(pool, exam_id, subject_id).await?;
+
+    Ok(())
+}
+
+/// 根据 score_value 降序计算指定考试+科目的排名并写入 rank_no
+async fn recompute_rankings(pool: &sqlx::SqlitePool, exam_id: i64, subject_id: i64) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE score SET rank_no = CASE
+            WHEN score_value IS NULL THEN NULL
+            ELSE (
+                SELECT COUNT(*) + 1 FROM score s2
+                WHERE s2.exam_id = ?1 AND s2.subject_id = ?2
+                  AND s2.score_value IS NOT NULL
+                  AND s2.score_value > score.score_value
+            )
+         END
+         WHERE exam_id = ?1 AND subject_id = ?2"
+    )
+    .bind(exam_id)
+    .bind(subject_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("计算排名失败: {}", e))?;
+
     Ok(())
 }
 
@@ -356,6 +383,9 @@ pub async fn import_scores_excel(
     }
 
     tx.commit().await.map_err(|e| e.to_string())?;
+
+    // 导入完成后重新计算排名
+    recompute_rankings(pool, exam_id, subject_id).await?;
 
     let success_count = parsed_rows.len() as i64;
     let empty_errors: Vec<String> = Vec::new();
