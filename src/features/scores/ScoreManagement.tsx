@@ -15,6 +15,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAppStore } from '@/app/store';
 import { configService, examService, scoreService, studentService, subjectService } from '@/services';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
+import { useIsDark } from '@/hooks/useTheme';
 import type { Exam, ExamSubjectConfig, Subject } from '@/types';
 import dayjs from 'dayjs';
 
@@ -29,11 +30,19 @@ interface ExamListItemProps {
   onDelete: (id: number) => void;
   onConfigure: (examId: number) => void;
   isReadonly: boolean;
+  isDark: boolean;
 }
 
 function ExamListItem({
-  exam, isSelected, onSelect, onEdit, onDelete, onConfigure, isReadonly,
+  exam, isSelected, onSelect, onEdit, onDelete, onConfigure, isReadonly, isDark: dark,
 }: ExamListItemProps) {
+  const itemBorder = dark ? '#303030' : '#f0f0f0';
+  const itemBg = dark ? '#141414' : '#fff';
+  const itemSelectedBg = dark ? '#111d2c' : '#e6f4ff';
+  const textHeading = dark ? '#e8e8e8' : '#1a1a2e';
+  const textMuted = dark ? '#6b6b6b' : '#999';
+  const hoverBorder = dark ? '#434343' : '#d9d9d9';
+
   return (
     <div
       onClick={() => onSelect(exam.id)}
@@ -42,21 +51,21 @@ function ExamListItem({
         borderRadius: 8,
         cursor: 'pointer',
         marginBottom: 6,
-        border: isSelected ? '2px solid #1677ff' : '1px solid #f0f0f0',
-        background: isSelected ? '#e6f4ff' : '#fff',
+        border: isSelected ? '2px solid #1677ff' : `1px solid ${itemBorder}`,
+        background: isSelected ? itemSelectedBg : itemBg,
         transition: 'all 0.2s',
         position: 'relative',
       }}
       onMouseEnter={(e) => {
-        if (!isSelected) (e.currentTarget as HTMLElement).style.borderColor = '#d9d9d9';
+        if (!isSelected) (e.currentTarget as HTMLElement).style.borderColor = hoverBorder;
       }}
       onMouseLeave={(e) => {
-        if (!isSelected) (e.currentTarget as HTMLElement).style.borderColor = '#f0f0f0';
+        if (!isSelected) (e.currentTarget as HTMLElement).style.borderColor = itemBorder;
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: isSelected ? 600 : 500, fontSize: 14, color: '#1a1a2e', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <div style={{ fontWeight: isSelected ? 600 : 500, fontSize: 14, color: textHeading, marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {isSelected && <TrophyOutlined style={{ color: '#1677ff', marginRight: 6 }} />}
             {exam.name}
           </div>
@@ -93,7 +102,7 @@ function ExamListItem({
             size="small"
             icon={<SettingOutlined />}
             onClick={(e) => e.stopPropagation()}
-            style={{ color: '#999', flexShrink: 0 }}
+            style={{ color: textMuted, flexShrink: 0 }}
           />
         </Dropdown>
       </div>
@@ -105,6 +114,17 @@ function ExamListItem({
 export default function ScoreManagement() {
   const queryClient = useQueryClient();
   const { currentCohort, isReadonly } = useAppStore();
+  const isDark = useIsDark();
+
+  // ── 暗色适配色值 ──
+  const panelBg = isDark ? '#1a1a1a' : '#fafafa';
+  const itemBg = isDark ? '#141414' : '#fff';
+  const itemBorder = isDark ? '#303030' : '#f0f0f0';
+  const itemSelectedBg = isDark ? '#111d2c' : '#e6f4ff';
+  const textLabel = isDark ? '#8c8c8c' : '#666';
+  const textMuted = isDark ? '#6b6b6b' : '#999';
+  const textHeading = isDark ? '#e8e8e8' : '#1a1a2e';
+  const iconMuted = isDark ? '#434343' : '#d9d9d9';
 
   // ── core selection state ──
   const [selectedExamId, setSelectedExamId] = useState<number | null>(null);
@@ -605,7 +625,7 @@ export default function ScoreManagement() {
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             marginBottom: 12, padding: '0 4px',
           }}>
-            <Text strong style={{ fontSize: 13, color: '#666' }}>考试列表</Text>
+            <Text strong style={{ fontSize: 13, color: textLabel }}>考试列表</Text>
             <Badge count={exams.length} size="small" showZero color="#1677ff" overflowCount={999} />
           </div>
 
@@ -614,7 +634,7 @@ export default function ScoreManagement() {
               <Skeleton active paragraph={{ rows: 4 }} />
             ) : exams.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '32px 16px' }}>
-                <ExperimentOutlined style={{ fontSize: 32, color: '#d9d9d9' }} />
+                <ExperimentOutlined style={{ fontSize: 32, color: iconMuted }} />
                 <Paragraph type="secondary" style={{ marginTop: 12, fontSize: 13 }}>
                   还没有考试记录
                 </Paragraph>
@@ -644,6 +664,7 @@ export default function ScoreManagement() {
                   onDelete={handleDeleteExam}
                   onConfigure={handleOpenConfig}
                   isReadonly={isReadonly}
+                  isDark={isDark}
                 />
               ))
             )}
@@ -653,7 +674,7 @@ export default function ScoreManagement() {
           <Divider style={{ margin: '12px 0 8px' }} />
           <div style={{ padding: '0 4px', marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span>
-              <Text strong style={{ fontSize: 13, color: '#666' }}>科目池</Text>
+              <Text strong style={{ fontSize: 13, color: textLabel }}>科目池</Text>
               <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>全局可用科目</Text>
             </span>
             {!isReadonly && (
@@ -741,8 +762,8 @@ export default function ScoreManagement() {
             /* ── No exam selected: Empty State ── */
             <Card style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <div style={{ textAlign: 'center', padding: '48px 0', maxWidth: 400 }}>
-                <TrophyOutlined style={{ fontSize: 56, color: '#d9d9d9', marginBottom: 24 }} />
-                <Title level={4} style={{ color: '#999', marginBottom: 8 }}>
+                <TrophyOutlined style={{ fontSize: 56, color: iconMuted, marginBottom: 24 }} />
+                <Title level={4} style={{ color: textMuted, marginBottom: 8 }}>
                   选择一场考试开始管理
                 </Title>
                 <Paragraph type="secondary" style={{ marginBottom: 24 }}>
@@ -851,7 +872,7 @@ export default function ScoreManagement() {
                 {!hasConfiguredSubjects ? (
                   <div style={{
                     textAlign: 'center', padding: '24px 0',
-                    background: '#fafafa', borderRadius: 8,
+                    background: panelBg, borderRadius: 8,
                   }}>
                     <ExclamationCircleOutlined style={{ fontSize: 28, color: '#faad14', marginBottom: 12 }} />
                     <Paragraph type="secondary" style={{ marginBottom: 16 }}>
@@ -885,8 +906,8 @@ export default function ScoreManagement() {
                             borderRadius: 8,
                             border: isCurrentSubject
                               ? '2px solid #1677ff'
-                              : '1px solid #e8e8e8',
-                            background: isCurrentSubject ? '#e6f4ff' : '#fff',
+                              : `1px solid ${itemBorder}`,
+                            background: isCurrentSubject ? itemSelectedBg : itemBg,
                             cursor: 'pointer',
                             minWidth: 160,
                             transition: 'all 0.2s',
@@ -999,11 +1020,11 @@ export default function ScoreManagement() {
                           style={{
                             marginBottom: 16,
                             padding: '12px 16px',
-                            background: '#fafafa',
+                            background: panelBg,
                             borderRadius: 8,
                           }}
                         >
-                          <Text strong style={{ fontSize: 12, color: '#999', display: 'block', marginBottom: 8 }}>
+                          <Text strong style={{ fontSize: 12, color: textMuted, display: 'block', marginBottom: 8 }}>
                             成绩统计
                           </Text>
                           <Row gutter={[16, 8]}>
@@ -1012,7 +1033,7 @@ export default function ScoreManagement() {
                                 <div style={{ fontSize: 22, fontWeight: 700, color: '#1677ff' }}>
                                   {scoreStats.avg_score.toFixed(1)}
                                 </div>
-                                <div style={{ fontSize: 11, color: '#999' }}>平均分</div>
+                                <div style={{ fontSize: 11, color: textMuted }}>平均分</div>
                               </div>
                             </Col>
                             <Col span={6}>
@@ -1020,7 +1041,7 @@ export default function ScoreManagement() {
                                 <div style={{ fontSize: 22, fontWeight: 700, color: '#52c41a' }}>
                                   {scoreStats.max_score}
                                 </div>
-                                <div style={{ fontSize: 11, color: '#999' }}>最高分</div>
+                                <div style={{ fontSize: 11, color: textMuted }}>最高分</div>
                               </div>
                             </Col>
                             <Col span={6}>
@@ -1028,7 +1049,7 @@ export default function ScoreManagement() {
                                 <div style={{ fontSize: 22, fontWeight: 700, color: '#ff4d4f' }}>
                                   {scoreStats.min_score}
                                 </div>
-                                <div style={{ fontSize: 11, color: '#999' }}>最低分</div>
+                                <div style={{ fontSize: 11, color: textMuted }}>最低分</div>
                               </div>
                             </Col>
                             <Col span={6}>
@@ -1036,7 +1057,7 @@ export default function ScoreManagement() {
                                 <div style={{ fontSize: 22, fontWeight: 700, color: '#722ed1' }}>
                                   {(scoreStats.pass_rate * 100).toFixed(0)}%
                                 </div>
-                                <div style={{ fontSize: 11, color: '#999' }}>及格率</div>
+                                <div style={{ fontSize: 11, color: textMuted }}>及格率</div>
                               </div>
                             </Col>
                             <Col span={6}>
@@ -1044,31 +1065,31 @@ export default function ScoreManagement() {
                                 <div style={{ fontSize: 22, fontWeight: 700, color: '#fa8c16' }}>
                                   {(scoreStats.excellent_rate * 100).toFixed(0)}%
                                 </div>
-                                <div style={{ fontSize: 11, color: '#999' }}>优秀率</div>
+                                <div style={{ fontSize: 11, color: textMuted }}>优秀率</div>
                               </div>
                             </Col>
                             <Col span={6}>
                               <div style={{ textAlign: 'center' }}>
-                                <div style={{ fontSize: 16, fontWeight: 600, color: '#666' }}>
+                                <div style={{ fontSize: 16, fontWeight: 600, color: textLabel }}>
                                   {scoreStats.full_score}
                                 </div>
-                                <div style={{ fontSize: 11, color: '#999' }}>满分</div>
+                                <div style={{ fontSize: 11, color: textMuted }}>满分</div>
                               </div>
                             </Col>
                             <Col span={6}>
                               <div style={{ textAlign: 'center' }}>
-                                <div style={{ fontSize: 16, fontWeight: 600, color: '#666' }}>
+                                <div style={{ fontSize: 16, fontWeight: 600, color: textLabel }}>
                                   {scoreStats.pass_score}
                                 </div>
-                                <div style={{ fontSize: 11, color: '#999' }}>及格线</div>
+                                <div style={{ fontSize: 11, color: textMuted }}>及格线</div>
                               </div>
                             </Col>
                             <Col span={6}>
                               <div style={{ textAlign: 'center' }}>
-                                <div style={{ fontSize: 16, fontWeight: 600, color: '#666' }}>
+                                <div style={{ fontSize: 16, fontWeight: 600, color: textLabel }}>
                                   {scoreStats.excellent_score}
                                 </div>
-                                <div style={{ fontSize: 11, color: '#999' }}>优秀线</div>
+                                <div style={{ fontSize: 11, color: textMuted }}>优秀线</div>
                               </div>
                             </Col>
                           </Row>
@@ -1108,7 +1129,7 @@ export default function ScoreManagement() {
                   ) : (
                     <div style={{
                       textAlign: 'center', padding: '24px 0',
-                      background: '#fafafa', borderRadius: 8,
+                      background: panelBg, borderRadius: 8,
                     }}>
                       <Text type="secondary">请在上方选择一个科目，即可查看和录入成绩</Text>
                     </div>
@@ -1161,7 +1182,7 @@ export default function ScoreManagement() {
                 ) : (
                   <div style={{
                     textAlign: 'center', padding: '20px 0',
-                    background: '#fafafa', borderRadius: 8,
+                    background: panelBg, borderRadius: 8,
                   }}>
                     <Text type="secondary">
                       {hasConfiguredSubjects

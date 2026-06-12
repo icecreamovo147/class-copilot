@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Select, Tag, Button, Typography, Space, message } from 'antd';
+import { Layout, Menu, Select, Tag, Button, Typography, Space, message, Dropdown } from 'antd';
+import type { MenuProps } from 'antd';
 import {
   DashboardOutlined,
   TeamOutlined,
@@ -13,10 +14,15 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   ApartmentOutlined,
+  SunOutlined,
+  MoonOutlined,
+  DesktopOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAppStore } from '@/app/store';
+import type { ThemeMode } from '@/app/store';
 import { cohortService } from '@/services';
+import { useIsDark } from '@/hooks/useTheme';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -33,12 +39,43 @@ const menuItems = [
   { key: '/settings', icon: <SettingOutlined />, label: '系统设置' },
 ];
 
+const themeMenuItems: MenuProps['items'] = [
+  {
+    key: 'light',
+    icon: <SunOutlined />,
+    label: '浅色模式',
+  },
+  {
+    key: 'dark',
+    icon: <MoonOutlined />,
+    label: '深色模式',
+  },
+  {
+    key: 'auto',
+    icon: <DesktopOutlined />,
+    label: '跟随系统',
+  },
+];
+
+const themeIconMap: Record<ThemeMode, React.ReactNode> = {
+  light: <SunOutlined />,
+  dark: <MoonOutlined />,
+  auto: <DesktopOutlined />,
+};
+
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { currentCohort, setCurrentCohort, cohorts, setCohorts, sidebarCollapsed, toggleSidebar, isReadonly } = useAppStore();
+  const {
+    currentCohort, setCurrentCohort,
+    cohorts, setCohorts,
+    sidebarCollapsed, toggleSidebar,
+    isReadonly,
+    themeMode, setThemeMode,
+  } = useAppStore();
   const queryClient = useQueryClient();
   const [initializing, setInitializing] = useState(true);
+  const isDark = useIsDark();
 
   const { data: cohortsData } = useQuery({
     queryKey: ['cohorts'],
@@ -91,48 +128,103 @@ export default function AppLayout() {
     navigate(info.key);
   };
 
+  const handleThemeChange: MenuProps['onClick'] = ({ key }) => {
+    setThemeMode(key as ThemeMode);
+  };
+
+  // 根据主题模式计算动态颜色
+  const borderColor = isDark ? '#303030' : '#f0f0f0';
+  const headerBg = isDark ? '#141414' : '#fff';
+
   return (
     <Layout style={{ height: '100vh', overflow: 'hidden' }}>
       <Sider
         trigger={null}
         collapsible
         collapsed={sidebarCollapsed}
-        theme="light"
+        theme={isDark ? 'dark' : 'light'}
         style={{
-          borderRight: '1px solid #f0f0f0',
-          overflow: 'auto',
+          borderRight: `1px solid ${borderColor}`,
+          overflow: 'hidden',
           height: '100vh',
         }}
       >
-        <div
-          style={{
-            height: 64,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderBottom: '1px solid #f0f0f0',
-          }}
-        >
-          <Typography.Title level={5} style={{ margin: 0, whiteSpace: 'nowrap' }}>
-            {sidebarCollapsed ? '班管' : '班级事务管理系统'}
-          </Typography.Title>
+        <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+          {/* 标题区域 */}
+          <div
+            style={{
+              height: 64,
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderBottom: `1px solid ${borderColor}`,
+            }}
+          >
+            <Typography.Title level={5} style={{ margin: 0, whiteSpace: 'nowrap' }}>
+              {sidebarCollapsed ? '班管' : '班级事务管理系统'}
+            </Typography.Title>
+          </div>
+
+          {/* 导航菜单 — 占满剩余空间 */}
+          <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+            <Menu
+              mode="inline"
+              selectedKeys={[location.pathname]}
+              items={menuItems}
+              onClick={handleMenuClick}
+            />
+          </div>
+
+          {/* 主题切换 — 固定在侧边栏底部 */}
+          <div
+            style={{
+              flexShrink: 0,
+              borderTop: `1px solid ${borderColor}`,
+              padding: sidebarCollapsed ? '8px 4px' : '8px 4px',
+            }}
+          >
+            <Dropdown
+              menu={{
+                items: themeMenuItems,
+                selectable: true,
+                selectedKeys: [themeMode],
+                onClick: handleThemeChange,
+              }}
+              trigger={['hover']}
+              placement="topRight"
+            >
+              <Button
+                type="text"
+                icon={themeIconMap[themeMode]}
+                block
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
+                  padding: sidebarCollapsed ? '4px 0' : '4px 16px',
+                  height: 36,
+                }}
+              >
+                {!sidebarCollapsed && (
+                  <span style={{ marginLeft: 8 }}>
+                    {themeMode === 'light' ? '浅色模式' : themeMode === 'dark' ? '深色模式' : '跟随系统'}
+                  </span>
+                )}
+              </Button>
+            </Dropdown>
+          </div>
         </div>
-        <Menu
-          mode="inline"
-          selectedKeys={[location.pathname]}
-          items={menuItems}
-          onClick={handleMenuClick}
-        />
       </Sider>
       <Layout style={{ minWidth: 0, height: '100vh', overflow: 'hidden' }}>
         <Header
           style={{
-            background: '#fff',
+            background: headerBg,
             padding: '0 24px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            borderBottom: '1px solid #f0f0f0',
+            borderBottom: `1px solid ${borderColor}`,
             height: 64,
             flex: '0 0 64px',
           }}

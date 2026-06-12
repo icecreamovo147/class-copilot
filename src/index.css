@@ -14,6 +14,11 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* ── 暗色模式全局变量 ── */
+[data-theme='dark'] {
+  color-scheme: dark;
+}
+
 /* Ant Design 覆盖 */
 .ant-layout-sider {
   box-shadow: none !important;
@@ -22,6 +27,10 @@ body {
 .ant-table-wrapper {
   background: #fff;
   border-radius: 6px;
+}
+
+[data-theme='dark'] .ant-table-wrapper {
+  background: transparent;
 }
 
 .page-header {
@@ -63,13 +72,25 @@ body {
   color: #52c41a;
 }
 
+[data-theme='dark'] .cohort-tag-active {
+  color: #73d13d;
+}
+
 .cohort-tag-archived {
   color: #999;
+}
+
+[data-theme='dark'] .cohort-tag-archived {
+  color: #6b6b6b;
 }
 
 /* ── 考勤异常行 ── */
 .attendance-row-abnormal td {
   background: rgba(250, 173, 20, 0.04) !important;
+}
+
+[data-theme='dark'] .attendance-row-abnormal td {
+  background: rgba(250, 173, 20, 0.08) !important;
 }
 
 /* ── 考勤状态 Tag（Dropdown 触发）── */
@@ -118,6 +139,12 @@ body {
   .ant-modal-content {
     box-shadow: 0 0 0 0.5px rgba(15, 23, 42, 0.08);
   }
+}
+
+[data-theme='dark'] .ant-card,
+[data-theme='dark'] .ant-table-wrapper,
+[data-theme='dark'] .ant-modal-content {
+  box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.06);
 }
 
 @media print {

@@ -1,6 +1,30 @@
 import { create } from 'zustand';
 import type { Cohort } from '@/types';
 
+export type ThemeMode = 'light' | 'dark' | 'auto';
+
+const STORAGE_KEY = 'theme-mode';
+
+function loadThemeMode(): ThemeMode {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored === 'light' || stored === 'dark' || stored === 'auto') {
+      return stored;
+    }
+  } catch {
+    // localStorage 不可用时回退默认值
+  }
+  return 'auto';
+}
+
+function saveThemeMode(mode: ThemeMode) {
+  try {
+    localStorage.setItem(STORAGE_KEY, mode);
+  } catch {
+    // 静默失败
+  }
+}
+
 interface AppState {
   // 当前届次
   currentCohort: Cohort | null;
@@ -21,6 +45,10 @@ interface AppState {
   // 版本信息
   appVersion: string;
   setAppVersion: (version: string) => void;
+
+  // 主题模式
+  themeMode: ThemeMode;
+  setThemeMode: (mode: ThemeMode) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -42,4 +70,10 @@ export const useAppStore = create<AppState>((set) => ({
 
   appVersion: '1.0.0',
   setAppVersion: (version) => set({ appVersion: version }),
+
+  themeMode: loadThemeMode(),
+  setThemeMode: (mode) => {
+    saveThemeMode(mode);
+    set({ themeMode: mode });
+  },
 }));

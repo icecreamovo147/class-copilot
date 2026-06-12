@@ -16,6 +16,7 @@ import { attendanceService, studentService } from '@/services';
 import type { Attendance, AttendanceStatus } from '@/types';
 import { ATTENDANCE_STATUSES } from '@/types';
 import { useLocalStorageState } from '@/hooks/useLocalStorageState';
+import { useIsDark } from '@/hooks/useTheme';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
@@ -49,8 +50,8 @@ const attendanceStatusConfig: Record<string, { label: string; color: string }> =
 };
 
 // ─── Stat Card ────────────────────────────────────────
-function StatCard({ label, count, color, bg, icon }: {
-  label: string; count: number; color: string; bg: string; icon: React.ReactNode;
+function StatCard({ label, count, color, bg, icon, isDark: dark }: {
+  label: string; count: number; color: string; bg: string; icon: React.ReactNode; isDark: boolean;
 }) {
   return (
     <div style={{
@@ -73,7 +74,7 @@ function StatCard({ label, count, color, bg, icon }: {
         {icon}
       </div>
       <div>
-        <div style={{ fontSize: 12, color: '#8c8c8c', lineHeight: '18px' }}>{label}</div>
+        <div style={{ fontSize: 12, color: dark ? '#8c8c8c' : '#8c8c8c', lineHeight: '18px' }}>{label}</div>
         <div style={{ fontSize: 24, fontWeight: 700, color, lineHeight: '30px' }}>{count}</div>
       </div>
     </div>
@@ -82,16 +83,19 @@ function StatCard({ label, count, color, bg, icon }: {
 
 // ─── Inline-Editable Text Cell ──────────────────────
 function EditableTextCell({
-  value, placeholder, disabled, onSave,
+  value, placeholder, disabled, onSave, isDark: dark,
 }: {
   value: string | null;
   placeholder: string;
   disabled: boolean;
   onSave: (val: string) => void;
+  isDark: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value || '');
   const inputRef = useRef<InputRef>(null);
+  const textDisabled = dark ? '#8c8c8c' : '#595959';
+  const textPlaceholder = dark ? '#595959' : '#bfbfbf';
 
   useEffect(() => {
     if (editing) {
@@ -125,7 +129,7 @@ function EditableTextCell({
 
   if (disabled) {
     return value
-      ? <Text style={{ fontSize: 13, color: '#595959' }}>{value}</Text>
+      ? <Text style={{ fontSize: 13, color: textDisabled }}>{value}</Text>
       : <Text type="secondary" style={{ fontSize: 13 }}>-</Text>;
   }
 
@@ -133,7 +137,7 @@ function EditableTextCell({
     <Text
       style={{
         fontSize: 13,
-        color: value ? '#595959' : '#bfbfbf',
+        color: value ? textDisabled : textPlaceholder,
         cursor: 'pointer',
         borderBottom: '1px dashed transparent',
         transition: 'color 0.15s, border-color 0.15s',
@@ -144,7 +148,7 @@ function EditableTextCell({
         (e.currentTarget as HTMLElement).style.borderBottomColor = '#1677ff';
       }}
       onMouseLeave={(e) => {
-        (e.currentTarget as HTMLElement).style.color = value ? '#595959' : '#bfbfbf';
+        (e.currentTarget as HTMLElement).style.color = value ? textDisabled : textPlaceholder;
         (e.currentTarget as HTMLElement).style.borderBottomColor = 'transparent';
       }}
       onClick={() => {
@@ -197,6 +201,28 @@ export default function AttendancePage() {
   const queryClient = useQueryClient();
   const { currentCohort, isReadonly } = useAppStore();
   const [activeTab, setActiveTab] = useState('register');
+  const isDark = useIsDark();
+
+  // ── 暗色适配色值 ──
+  const toolbarBg = isDark ? '#141414' : '#fff';
+  const toolbarBorder = isDark ? '#303030' : '#f0f0f0';
+  const textHeading = isDark ? '#e8e8e8' : '#262626';
+  const textDisabled = isDark ? '#8c8c8c' : '#595959';
+  const textPlaceholder = isDark ? '#595959' : '#bfbfbf';
+  const textLabel = isDark ? '#8c8c8c' : '#8c8c8c';
+
+  // 暗色模式下状态卡片背景映射
+  const getStatusBg = (lightBg: string) => {
+    if (!isDark) return lightBg;
+    const darkMap: Record<string, string> = {
+      '#f6ffed': '#1a2e1a',
+      '#fff7e6': '#2e2616',
+      '#fffbe6': '#2e2a16',
+      '#e6f4ff': '#111d2c',
+      '#fff1f0': '#2c1616',
+    };
+    return darkMap[lightBg] || lightBg;
+  };
 
   // ==================== 当日登记状态 ====================
   const [selectedDate, setSelectedDate] = useState(dayjs());
@@ -472,8 +498,8 @@ export default function AttendancePage() {
       {/* ── 1) Toolbar ── */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-        padding: '8px 16px', background: '#fff', borderRadius: 8,
-        border: '1px solid #f0f0f0',
+        padding: '8px 16px', background: toolbarBg, borderRadius: 8,
+        border: `1px solid ${toolbarBorder}`,
       }}>
         {/* Left: filters */}
         <DatePicker
@@ -496,9 +522,9 @@ export default function AttendancePage() {
         {/* Center: class summary */}
         <div style={{
           flex: 1, minWidth: 200, display: 'flex', alignItems: 'center', gap: 16,
-          padding: '0 12px', borderLeft: '1px solid #f0f0f0', borderRight: '1px solid #f0f0f0',
+          padding: '0 12px', borderLeft: `1px solid ${toolbarBorder}`, borderRight: `1px solid ${toolbarBorder}`,
         }}>
-          <Text strong style={{ fontSize: 13, color: '#262626' }}>
+          <Text strong style={{ fontSize: 13, color: textHeading }}>
             {currentCohort.cohort_name} {currentCohort.class_name}
           </Text>
           <Space size={12}>
@@ -555,8 +581,9 @@ export default function AttendancePage() {
             label={STATUS_LABEL_MAP[key]}
             count={stats[key === '正常' ? 'normal' : key === '迟到' ? 'late' : key === '早退' ? 'early' : key === '请假' ? 'leave' : 'absent']}
             color={STATUS_CONFIG[key].color}
-            bg={STATUS_CONFIG[key].bg}
+            bg={getStatusBg(STATUS_CONFIG[key].bg)}
             icon={STATUS_CONFIG[key].icon}
+            isDark={isDark}
           />
         ))}
       </div>
@@ -620,6 +647,7 @@ export default function AttendancePage() {
                   placeholder="输入原因"
                   disabled={isReadonly}
                   onSave={(val) => handleFieldUpdate(record.student_id, 'reason', val || null)}
+                  isDark={isDark}
                 />
               ),
             },
@@ -647,6 +675,7 @@ export default function AttendancePage() {
                   placeholder="输入备注"
                   disabled={isReadonly}
                   onSave={(val) => handleFieldUpdate(record.student_id, 'remark', val || null)}
+                  isDark={isDark}
                 />
               ),
             },
@@ -699,8 +728,8 @@ export default function AttendancePage() {
       {/* Query Toolbar */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-        padding: '8px 16px', background: '#fff', borderRadius: 8,
-        border: '1px solid #f0f0f0',
+        padding: '8px 16px', background: toolbarBg, borderRadius: 8,
+        border: `1px solid ${toolbarBorder}`,
       }}>
         <RangePicker
           value={queryRangeValue}
