@@ -1,10 +1,10 @@
-pub mod cohort;
-pub mod student;
-pub mod homework;
-pub mod attendance;
-pub mod exam;
 pub mod affair;
-pub mod stats;
+pub mod attendance;
 pub mod backup;
+pub mod cohort;
 pub mod config;
+pub mod exam;
+pub mod homework;
+pub mod stats;
+pub mod student;
 pub mod subject;

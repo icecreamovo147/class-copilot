@@ -1,0 +1,71 @@
+name: release-build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  bundle:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            args: --bundles app
+          - os: windows-latest
+            args: --bundles msi,nsis
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Tauri bundles
+        run: npm run tauri build -- ${{ matrix.args }}
+
+      - name: Build macOS DMG without Finder automation
+        if: matrix.os == 'macos-latest'
+        run: ./scripts/build-macos-dmg.sh
+
+      - name: Verify macOS install and uninstall flow
+        if: matrix.os == 'macos-latest'
+        run: ./scripts/verify-macos-install.sh
+
+      - name: Verify Windows installer smoke flow
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: ./scripts/windows-smoke.ps1
+
+      - name: Collect bundle checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="src-tauri/target/release/bundle"
+          if [ ! -d "$out" ]; then
+            echo "bundle directory not found" >&2
+            exit 1
+          fi
+          find "$out" -type f \
+            \( -name "*.app.tar.gz" -o -name "*.dmg" -o -name "*.msi" -o -name "*.exe" \) \
+            -print0 | sort -z | xargs -0 shasum -a 256 > "$out/SHA256SUMS.txt"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundles-${{ matrix.os }}
+          path: |
+            src-tauri/target/release/bundle

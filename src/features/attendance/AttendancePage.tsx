@@ -1,15 +1,19 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, Table, Button, DatePicker, Select, Tag, message, Typography, Space, Empty, Descriptions, Modal, Input, Tabs } from 'antd';
 import { CheckCircleOutlined, DownloadOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/app/store';
 import { attendanceService, studentService } from '@/services';
 import type { Attendance, AttendanceStatus } from '@/types';
 import { ATTENDANCE_STATUSES } from '@/types';
+import { useLocalStorageState } from '@/hooks/useLocalStorageState';
 import dayjs from 'dayjs';
 
 const { Title } = Typography;
 const { RangePicker } = DatePicker;
+const LEAVE_TYPES = ['病假', '事假', '活动假', '其他'];
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const statusColors: Record<string, string> = {
   '正常': 'green',
@@ -20,25 +24,54 @@ const statusColors: Record<string, string> = {
 };
 
 export default function AttendancePage() {
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { currentCohort, isReadonly } = useAppStore();
   const [activeTab, setActiveTab] = useState('register');
 
   // ==================== 当日登记状态 ====================
   const [selectedDate, setSelectedDate] = useState(dayjs());
-  const [statusFilter, setStatusFilter] = useState<string | undefined>();
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [statusFilter, setStatusFilter] = useLocalStorageState<string | undefined>('attendance_register_status', undefined);
+  const [page, setPage] = useLocalStorageState('attendance_register_page', 1);
+  const [pageSize, setPageSize] = useLocalStorageState('attendance_register_page_size', 20);
   const [leaveModalVisible, setLeaveModalVisible] = useState(false);
   const [editingAttendance, setEditingAttendance] = useState<Attendance | null>(null);
   const dateStr = selectedDate.format('YYYY-MM-DD');
 
   // ==================== 历史查询状态 ====================
-  const [queryDateRange, setQueryDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
-  const [queryStudentId, setQueryStudentId] = useState<number | undefined>();
-  const [queryStatus, setQueryStatus] = useState<string | undefined>();
-  const [queryPage, setQueryPage] = useState(1);
-  const [queryPageSize, setQueryPageSize] = useState(20);
+  const [queryDateRange, setQueryDateRange] = useLocalStorageState<[string, string] | null>('attendance_query_range', null);
+  const [queryStudentId, setQueryStudentId] = useLocalStorageState<number | undefined>('attendance_query_student', undefined);
+  const [queryStatus, setQueryStatus] = useLocalStorageState<string | undefined>('attendance_query_status', undefined);
+  const [queryPage, setQueryPage] = useLocalStorageState('attendance_query_page', 1);
+  const [queryPageSize, setQueryPageSize] = useLocalStorageState('attendance_query_page_size', 20);
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    const date = searchParams.get('date');
+    const startDate = searchParams.get('start_date');
+    const endDate = searchParams.get('end_date');
+    const status = searchParams.get('status');
+
+    if (tab === 'register' || tab === 'query') {
+      setActiveTab(tab);
+    }
+    if (date && DATE_PATTERN.test(date)) {
+      setSelectedDate(dayjs(date));
+    }
+    if (startDate && endDate && DATE_PATTERN.test(startDate) && DATE_PATTERN.test(endDate)) {
+      setQueryDateRange([startDate, endDate]);
+      setQueryPage(1);
+    }
+    if (status) {
+      if (tab === 'register') {
+        setStatusFilter(status);
+        setPage(1);
+      } else {
+        setQueryStatus(status);
+        setQueryPage(1);
+      }
+    }
+  }, [searchParams, setPage, setQueryDateRange, setQueryPage, setQueryStatus, setSelectedDate, setStatusFilter]);
 
   // ==================== 当日登记数据 ====================
   const { data: students } = useQuery({
@@ -54,8 +87,31 @@ export default function AttendancePage() {
   });
 
   // ==================== 历史查询数据 ====================
-  const qStart = queryDateRange?.[0]?.format('YYYY-MM-DD');
-  const qEnd = queryDateRange?.[1]?.format('YYYY-MM-DD');
+  const queryRangeValue = queryDateRange ? [dayjs(queryDateRange[0]), dayjs(queryDateRange[1])] as [dayjs.Dayjs, dayjs.Dayjs] : null;
+  const qStart = queryDateRange?.[0];
+  const qEnd = queryDateRange?.[1];
+
+  const applyRangePreset = (preset: 'week' | 'month' | 'semester') => {
+    const now = dayjs();
+    if (preset === 'week') {
+      setQueryDateRange([now.startOf('week').format('YYYY-MM-DD'), now.endOf('week').format('YYYY-MM-DD')]);
+      setQueryPage(1);
+      return;
+    }
+    if (preset === 'month') {
+      setQueryDateRange([now.startOf('month').format('YYYY-MM-DD'), now.endOf('month').format('YYYY-MM-DD')]);
+      setQueryPage(1);
+      return;
+    }
+    const semester = currentCohort?.semester || '';
+    const matchYear = semester.match(/(\d{4})/);
+    const year = matchYear ? Number(matchYear[1]) : now.year();
+    const isSpring = semester.includes('春');
+    const start = isSpring ? dayjs(`${year}-02-01`) : dayjs(`${year}-08-01`);
+    const end = isSpring ? dayjs(`${year}-07-31`) : dayjs(`${year + 1}-01-31`);
+    setQueryDateRange([start.format('YYYY-MM-DD'), end.format('YYYY-MM-DD')]);
+    setQueryPage(1);
+  };
 
   const { data: queryResult, isLoading: queryLoading } = useQuery({
     queryKey: ['attendanceQuery', currentCohort?.id, qStart, qEnd, queryStudentId, queryStatus, queryPage, queryPageSize],
@@ -100,6 +156,9 @@ export default function AttendancePage() {
       student_no: s.student_no,
       group_name: s.group_name,
       status: attendance?.status || '正常' as AttendanceStatus,
+      leave_type: attendance?.leave_type || null,
+      leave_start_date: attendance?.leave_start_date || null,
+      leave_end_date: attendance?.leave_end_date || null,
       reason: attendance?.reason || null,
       remark: attendance?.remark || null,
       attendance_id: attendance?.id || null,
@@ -120,6 +179,9 @@ export default function AttendancePage() {
         student_id: studentId,
         attendance_date: dateStr,
         status: '请假',
+        leave_type: record?.leave_type || '事假',
+        leave_start_date: record?.leave_start_date || dateStr,
+        leave_end_date: record?.leave_end_date || dateStr,
         reason: '',
         remark: '',
         created_at: '',
@@ -147,6 +209,9 @@ export default function AttendancePage() {
       records: allRecords.map((r) => ({
         student_id: r.student_id,
         status: r.student_id === editingAttendance.student_id ? '请假' : r.status,
+        leave_type: r.student_id === editingAttendance.student_id ? editingAttendance.leave_type || undefined : undefined,
+        leave_start_date: r.student_id === editingAttendance.student_id ? editingAttendance.leave_start_date || undefined : undefined,
+        leave_end_date: r.student_id === editingAttendance.student_id ? editingAttendance.leave_end_date || undefined : undefined,
         reason: r.student_id === editingAttendance.student_id ? editingAttendance.reason || undefined : undefined,
         remark: r.student_id === editingAttendance.student_id ? editingAttendance.remark || undefined : undefined,
       })),
@@ -225,6 +290,7 @@ export default function AttendancePage() {
       ),
     },
     { title: '原因', dataIndex: 'reason', key: 'reason', ellipsis: true },
+    { title: '请假类型', dataIndex: 'leave_type', key: 'leave_type', width: 110, render: (v: string | null) => v || '-' },
     { title: '备注', dataIndex: 'remark', key: 'remark', ellipsis: true },
   ];
 
@@ -238,9 +304,10 @@ export default function AttendancePage() {
               placeholder="状态筛选"
               allowClear
               style={{ width: 120 }}
-              onChange={(val) => { setStatusFilter(val); setPage(1); }}
-              options={ATTENDANCE_STATUSES.map((s) => ({ value: s, label: s }))}
-            />
+            value={statusFilter}
+            onChange={(val) => { setStatusFilter(val); setPage(1); }}
+            options={ATTENDANCE_STATUSES.map((s) => ({ value: s, label: s }))}
+          />
           </Space>
           <Space>
             <Descriptions size="small" column={5} bordered>
@@ -311,6 +378,9 @@ export default function AttendancePage() {
     },
     { title: '学生姓名', dataIndex: 'student_name', key: 'student_name' },
     { title: '学号', dataIndex: 'student_no', key: 'student_no' },
+    { title: '请假类型', dataIndex: 'leave_type', key: 'leave_type', width: 110, render: (v: string | null) => v || '-' },
+    { title: '开始日期', dataIndex: 'leave_start_date', key: 'leave_start_date', width: 120, render: (v: string | null) => v || '-' },
+    { title: '结束日期', dataIndex: 'leave_end_date', key: 'leave_end_date', width: 120, render: (v: string | null) => v || '-' },
     { title: '原因', dataIndex: 'reason', key: 'reason', ellipsis: true },
     { title: '备注', dataIndex: 'remark', key: 'remark', ellipsis: true },
   ];
@@ -320,14 +390,16 @@ export default function AttendancePage() {
       <Card size="small" style={{ marginBottom: 16 }}>
         <Space wrap>
           <RangePicker
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            value={queryDateRange as any}
+            value={queryRangeValue}
             onChange={(dates) => {
-              setQueryDateRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null);
+              setQueryDateRange(dates ? [dates[0]!.format('YYYY-MM-DD'), dates[1]!.format('YYYY-MM-DD')] : null);
               setQueryPage(1);
             }}
             placeholder={['开始日期', '结束日期']}
           />
+          <Button onClick={() => applyRangePreset('week')}>本周</Button>
+          <Button onClick={() => applyRangePreset('month')}>本月</Button>
+          <Button onClick={() => applyRangePreset('semester')}>本学期</Button>
           <Select
             placeholder="选择学生"
             allowClear
@@ -407,6 +479,29 @@ export default function AttendancePage() {
       >
         <p>学生：{editingAttendance?.student_name}</p>
         <p>日期：{dateStr}</p>
+        <Select
+          placeholder="请选择请假类型"
+          style={{ width: '100%', marginBottom: 8 }}
+          value={editingAttendance?.leave_type || '事假'}
+          onChange={(value) => setEditingAttendance((prev) => prev ? { ...prev, leave_type: value } : null)}
+          options={LEAVE_TYPES.map((item) => ({ value: item, label: item }))}
+        />
+        <Space style={{ width: '100%', marginBottom: 8 }}>
+          <DatePicker
+            style={{ width: '100%' }}
+            value={editingAttendance?.leave_start_date ? dayjs(editingAttendance.leave_start_date) : dayjs(dateStr)}
+            onChange={(value) =>
+              setEditingAttendance((prev) => prev ? { ...prev, leave_start_date: value?.format('YYYY-MM-DD') || dateStr } : null)
+            }
+          />
+          <DatePicker
+            style={{ width: '100%' }}
+            value={editingAttendance?.leave_end_date ? dayjs(editingAttendance.leave_end_date) : dayjs(dateStr)}
+            onChange={(value) =>
+              setEditingAttendance((prev) => prev ? { ...prev, leave_end_date: value?.format('YYYY-MM-DD') || dateStr } : null)
+            }
+          />
+        </Space>
         <Input.TextArea
           placeholder="请输入请假原因"
           rows={3}

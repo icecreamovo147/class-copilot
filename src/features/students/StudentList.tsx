@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Card, Table, Button, Modal, Form, Input, Select, Space, Tag, message, Popconfirm, Typography, Row, Col, Spin, Alert,
 } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, DownloadOutlined, EyeOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/app/store';
 import { studentService } from '@/services';
+import { useLocalStorageState } from '@/hooks/useLocalStorageState';
+import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import type { Student } from '@/types';
 import type { ColumnsType } from 'antd/es/table';
 
@@ -14,16 +16,18 @@ const { Title } = Typography;
 
 export default function StudentList() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { currentCohort, isReadonly } = useAppStore();
   const [modalVisible, setModalVisible] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
-  const [searchText, setSearchText] = useState('');
-  const [genderFilter, setGenderFilter] = useState<string | undefined>();
-  const [groupFilter, setGroupFilter] = useState<string | undefined>();
-  const [statusFilter, setStatusFilter] = useState<string | undefined>();
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [searchText, setSearchText] = useLocalStorageState('student_list_search', '');
+  const [genderFilter, setGenderFilter] = useLocalStorageState<string | undefined>('student_list_gender', undefined);
+  const [groupFilter, setGroupFilter] = useLocalStorageState<string | undefined>('student_list_group', undefined);
+  const [statusFilter, setStatusFilter] = useLocalStorageState<string | undefined>('student_list_status', undefined);
+  const [focusFilter, setFocusFilter] = useLocalStorageState<string | undefined>('student_list_focus', undefined);
+  const [page, setPage] = useLocalStorageState('student_list_page', 1);
+  const [pageSize, setPageSize] = useLocalStorageState('student_list_page_size', 20);
   const [form] = Form.useForm();
 
   const { data, isLoading } = useQuery({
@@ -36,9 +40,24 @@ export default function StudentList() {
         gender: genderFilter,
         group_name: groupFilter,
         status: statusFilter,
+        is_focus: focusFilter === '1' ? true : focusFilter === '0' ? false : undefined,
       }),
     enabled: !!currentCohort,
   });
+
+  useEffect(() => {
+    const focus = searchParams.get('focus');
+    const status = searchParams.get('status');
+    if (focus === '1' || focus === '0') {
+      setFocusFilter(focus);
+    }
+    if (status) {
+      setStatusFilter(status);
+    }
+    if (focus || status) {
+      setPage(1);
+    }
+  }, [searchParams, setFocusFilter, setPage, setStatusFilter]);
 
   const createMutation = useMutation({
     mutationFn: (data: Partial<Student>) => studentService.create(data),
@@ -164,21 +183,23 @@ export default function StudentList() {
   };
 
   const columns: ColumnsType<Student> = [
-    { title: '姓名', dataIndex: 'name', key: 'name' },
-    { title: '学号', dataIndex: 'student_no', key: 'student_no' },
-    { title: '性别', dataIndex: 'gender', key: 'gender' },
-    { title: '家长电话', dataIndex: 'parent_phone', key: 'parent_phone' },
-    { title: '小组', dataIndex: 'group_name', key: 'group_name' },
+    { title: '姓名', dataIndex: 'name', key: 'name', width: 120 },
+    { title: '学号', dataIndex: 'student_no', key: 'student_no', width: 120 },
+    { title: '性别', dataIndex: 'gender', key: 'gender', width: 80 },
+    { title: '家长电话', dataIndex: 'parent_phone', key: 'parent_phone', width: 140 },
+    { title: '小组', dataIndex: 'group_name', key: 'group_name', width: 100 },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      render: (status: string) => <Tag>{status === '正常' ? <Tag color="green">正常</Tag> : <Tag color="orange">{status}</Tag>}</Tag>,
+      width: 100,
+      render: (status: string) => (status === '正常' ? <Tag color="green">正常</Tag> : <Tag color="orange">{status}</Tag>),
     },
     {
       title: '重点关注',
       dataIndex: 'is_focus',
       key: 'is_focus',
+      width: 100,
       render: (focus: boolean) => (focus ? <Tag color="red">是</Tag> : null),
     },
     {
@@ -201,7 +222,6 @@ export default function StudentList() {
       ),
     },
   ];
-
   // 获取所有学生以便提取分组列表
   const { data: allStudents } = useQuery({
     queryKey: ['allStudents', currentCohort?.id],
@@ -210,6 +230,10 @@ export default function StudentList() {
   });
 
   const groups = [...new Set((allStudents || []).map((s) => s.group_name).filter(Boolean))];
+
+  useKeyboardShortcut('n', handleCreate, { ctrlOrMeta: true, enabled: !isReadonly });
+  useKeyboardShortcut('i', handleImport, { ctrlOrMeta: true, enabled: !isReadonly });
+  useKeyboardShortcut('e', handleExport, { ctrlOrMeta: true });
 
   return (
     <div>
@@ -237,32 +261,63 @@ export default function StudentList() {
           <Input.Search
             placeholder="姓名/学号"
             allowClear
-            onSearch={setSearchText}
+            value={searchText}
+            onChange={(event) => setSearchText(event.target.value)}
+            onSearch={(value) => {
+              setSearchText(value);
+              setPage(1);
+            }}
             style={{ width: 200 }}
           />
           <Select
             placeholder="性别"
             allowClear
             style={{ width: 100 }}
-            onChange={setGenderFilter}
+            value={genderFilter}
+            onChange={(value) => {
+              setGenderFilter(value);
+              setPage(1);
+            }}
             options={[{ value: '男', label: '男' }, { value: '女', label: '女' }]}
           />
           <Select
             placeholder="小组"
             allowClear
             style={{ width: 120 }}
-            onChange={setGroupFilter}
+            value={groupFilter}
+            onChange={(value) => {
+              setGroupFilter(value);
+              setPage(1);
+            }}
             options={groups.map((g) => ({ value: g!, label: g }))}
           />
           <Select
             placeholder="状态"
             allowClear
             style={{ width: 120 }}
-            onChange={setStatusFilter}
+            value={statusFilter}
+            onChange={(value) => {
+              setStatusFilter(value);
+              setPage(1);
+            }}
             options={[
               { value: '正常', label: '正常' },
               { value: '休学', label: '休学' },
               { value: '退学', label: '退学' },
+            ]}
+          />
+          <Select
+            placeholder="重点关注"
+            allowClear
+            style={{ width: 140 }}
+            value={focusFilter}
+            onChange={(value) => {
+              setFocusFilter(value);
+              setPage(1);
+            }}
+            options={[
+              { value: '1', label: '仅重点关注' },
+              { value: '0', label: '仅非重点' },
             ]}
           />
         </div>
@@ -272,6 +327,7 @@ export default function StudentList() {
           columns={columns}
           rowKey="id"
           loading={isLoading}
+          scroll={{ x: 900 }}
           pagination={{
             current: page,
             pageSize,

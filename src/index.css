@@ -9,6 +9,9 @@ body {
   padding: 0;
   overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 /* Ant Design 覆盖 */
@@ -62,4 +65,71 @@ body {
 
 .cohort-tag-archived {
   color: #999;
+}
+
+/* ── 页面切换过渡动画 ── */
+.page-transition {
+  animation: pageFadeIn 0.35s ease-out;
+}
+
+@keyframes pageFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (min-resolution: 2dppx) {
+  body {
+    letter-spacing: 0.01em;
+  }
+
+  .ant-card,
+  .ant-table-wrapper,
+  .ant-modal-content {
+    box-shadow: 0 0 0 0.5px rgba(15, 23, 42, 0.08);
+  }
+}
+
+@media print {
+  html,
+  body,
+  #root {
+    height: auto;
+    overflow: visible;
+    background: #fff;
+  }
+
+  .ant-layout-sider,
+  .ant-layout-header,
+  .page-header button,
+  .filter-bar,
+  .action-bar,
+  .ant-btn,
+  .ant-pagination,
+  .ant-tabs-nav,
+  .ant-modal-root {
+    display: none !important;
+  }
+
+  .ant-layout,
+  .ant-layout-content,
+  .ant-card,
+  .ant-table-wrapper {
+    background: #fff !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  .ant-card {
+    page-break-inside: avoid;
+  }
+
+  .ant-table {
+    font-size: 12px;
+  }
 }

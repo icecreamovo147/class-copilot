@@ -1,4 +1,5 @@
-import { Card, Descriptions, Tabs, Table, Tag, Typography, Spin, Alert, Empty } from 'antd';
+import { Card, Descriptions, Tabs, Table, Tag, Typography, Spin, Alert, Empty, Button, Space, message } from 'antd';
+import { DownloadOutlined } from '@ant-design/icons';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { statisticsService, homeworkService, attendanceService } from '@/services';
@@ -47,6 +48,38 @@ export default function StudentDetail() {
   if (!profile) return <Empty description="未找到学生信息" />;
 
   const { student } = profile;
+
+  const handleExportGrowthArchive = async () => {
+    try {
+      const { save } = await import('@tauri-apps/plugin-dialog');
+      const filePath = await save({
+        filters: [{ name: 'Excel', extensions: ['xlsx'] }],
+        defaultPath: `${student.name}_成长档案.xlsx`,
+      });
+      if (filePath) {
+        await statisticsService.exportStudentGrowthArchive(studentId, filePath);
+        message.success('成长档案导出成功');
+      }
+    } catch {
+      message.error('成长档案导出失败');
+    }
+  };
+
+  const handleExportGrowthArchivePdf = async () => {
+    try {
+      const { save } = await import('@tauri-apps/plugin-dialog');
+      const filePath = await save({
+        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+        defaultPath: `${student.name}_成长档案.pdf`,
+      });
+      if (filePath) {
+        await statisticsService.exportStudentGrowthArchivePdf(studentId, filePath);
+        message.success('成长档案 PDF 导出成功');
+      }
+    } catch {
+      message.error('成长档案 PDF 导出失败');
+    }
+  };
 
   const tabItems = [
     {
@@ -122,11 +155,12 @@ export default function StudentDetail() {
       children: (
         <Table
           dataSource={profile.scores}
-          columns={[
-            { title: '考试', dataIndex: 'exam_name', key: 'exam_name' },
-            { title: '科目', dataIndex: 'subject_name', key: 'subject_name' },
-            { title: '成绩', dataIndex: 'score_value', key: 'score_value', render: (v: number | null) => v ?? '-' },
-          ]}
+            columns={[
+              { title: '考试', dataIndex: 'exam_name', key: 'exam_name' },
+              { title: '日期', dataIndex: 'exam_point', key: 'exam_point', width: 120 },
+              { title: '科目', dataIndex: 'subject_name', key: 'subject_name' },
+              { title: '成绩', dataIndex: 'score_value', key: 'score_value', render: (v: number | null) => v ?? '-' },
+            ]}
           rowKey={(_, index) => String(index)}
           pagination={false}
           size="small"
@@ -156,6 +190,14 @@ export default function StudentDetail() {
   return (
     <div>
       <Title level={4}>学生详情</Title>
+      <Space style={{ marginBottom: 16 }}>
+        <Button icon={<DownloadOutlined />} onClick={handleExportGrowthArchive}>
+          导出成长档案 Excel
+        </Button>
+        <Button icon={<DownloadOutlined />} onClick={handleExportGrowthArchivePdf}>
+          导出成长档案 PDF
+        </Button>
+      </Space>
       <Card style={{ marginBottom: 16 }}>
         <Descriptions title="基础信息" bordered size="small" column={3}>
           <Descriptions.Item label="姓名">{student.name}</Descriptions.Item>
@@ -172,6 +214,12 @@ export default function StudentDetail() {
             {student.is_focus ? <Tag color="red">是</Tag> : '否'}
           </Descriptions.Item>
           <Descriptions.Item label="备注">{student.remark || '-'}</Descriptions.Item>
+          <Descriptions.Item label="关注原因" span={3}>
+            {profile.focus_reasons.length > 0 ? profile.focus_reasons.join('；') : '无'}
+          </Descriptions.Item>
+          <Descriptions.Item label="综合评价" span={3}>
+            {profile.overall_evaluation}
+          </Descriptions.Item>
         </Descriptions>
       </Card>
 

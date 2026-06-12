@@ -1,4 +1,5 @@
 import { Card, Table, Button, Select, Tag, message, Typography, Space, Spin, Alert, Empty, Descriptions } from 'antd';
+import { LinkOutlined } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAppStore } from '@/app/store';
@@ -131,6 +132,26 @@ export default function HomeworkDetail() {
           <Descriptions.Item label="科目">{homework.subject_name || '-'}</Descriptions.Item>
           <Descriptions.Item label="发布日期">{homework.publish_date}</Descriptions.Item>
           <Descriptions.Item label="截止日期">{homework.deadline || '-'}</Descriptions.Item>
+          <Descriptions.Item label="附件" span={4}>
+            {homework.attachment_name ? (
+              <Button
+                type="link"
+                icon={<LinkOutlined />}
+                style={{ paddingInline: 0 }}
+                onClick={async () => {
+                  try {
+                    await homeworkService.openAttachment(homework.id);
+                  } catch (error) {
+                    message.error(error instanceof Error ? error.message : '打开附件失败');
+                  }
+                }}
+              >
+                {homework.attachment_name}
+              </Button>
+            ) : (
+              '-'
+            )}
+          </Descriptions.Item>
         </Descriptions>
         <Descriptions column={4} size="small">
           <Descriptions.Item label="总人数">{total}</Descriptions.Item>

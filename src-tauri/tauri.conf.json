@@ -2,10 +2,10 @@
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
   "productName": "数字化班级事务管理系统",
   "version": "1.0.0",
-  "identifier": "com.class-copilot.app",
+  "identifier": "com.class-copilot",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },

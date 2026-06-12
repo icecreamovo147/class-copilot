@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::State;
 
-use crate::AppState;
 use super::cohort::check_cohort_readonly;
+use crate::AppState;
 use calamine::Reader;
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
@@ -43,6 +43,7 @@ pub async fn get_students(
     gender: Option<String>,
     group_name: Option<String>,
     status: Option<String>,
+    is_focus: Option<bool>,
     page: Option<i64>,
     page_size: Option<i64>,
 ) -> Result<PaginatedResult<Student>, String> {
@@ -51,12 +52,18 @@ pub async fn get_students(
     let page_size = page_size.unwrap_or(20);
     let offset = (page - 1) * page_size;
 
-    let mut where_clauses = vec!["cohort_id = ?1".to_string(), "deleted_at IS NULL".to_string()];
+    let mut where_clauses = vec![
+        "cohort_id = ?1".to_string(),
+        "deleted_at IS NULL".to_string(),
+    ];
     let mut params: Vec<String> = vec![cohort_id.to_string()];
     let mut param_idx = 2;
 
     if let Some(ref s) = search {
-        where_clauses.push(format!("(name LIKE ?{} OR student_no LIKE ?{})", param_idx, param_idx));
+        where_clauses.push(format!(
+            "(name LIKE ?{} OR student_no LIKE ?{})",
+            param_idx, param_idx
+        ));
         params.push(format!("%{}%", s));
         param_idx += 1;
     }
@@ -75,6 +82,15 @@ pub async fn get_students(
         params.push(st.clone());
         param_idx += 1;
     }
+    if let Some(focus) = is_focus {
+        where_clauses.push(format!("is_focus = ?{}", param_idx));
+        params.push(if focus {
+            "1".to_string()
+        } else {
+            "0".to_string()
+        });
+        param_idx += 1;
+    }
 
     let where_clause = where_clauses.join(" AND ");
 
@@ -84,12 +100,17 @@ pub async fn get_students(
     for p in &params {
         count_stmt = count_stmt.bind(p);
     }
-    let (total,): (i64,) = count_stmt.fetch_one(pool).await.map_err(|e| e.to_string())?;
+    let (total,): (i64,) = count_stmt
+        .fetch_one(pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
     // 查询数据
     let data_query = format!(
         "SELECT * FROM student WHERE {} ORDER BY student_no ASC LIMIT ?{} OFFSET ?{}",
-        where_clause, param_idx, param_idx + 1
+        where_clause,
+        param_idx,
+        param_idx + 1
     );
     let mut data_stmt = sqlx::query_as::<_, Student>(&data_query);
     for p in &params {
@@ -98,7 +119,12 @@ pub async fn get_students(
     data_stmt = data_stmt.bind(page_size).bind(offset);
     let data = data_stmt.fetch_all(pool).await.map_err(|e| e.to_string())?;
 
-    Ok(PaginatedResult { data, total, page, page_size })
+    Ok(PaginatedResult {
+        data,
+        total,
+        page,
+        page_size,
+    })
 }
 
 #[tauri::command]
@@ -107,7 +133,7 @@ pub async fn get_all_students(
     cohort_id: i64,
 ) -> Result<Vec<Student>, String> {
     sqlx::query_as::<_, Student>(
-        "SELECT * FROM student WHERE cohort_id = ?1 AND deleted_at IS NULL ORDER BY student_no ASC"
+        "SELECT * FROM student WHERE cohort_id = ?1 AND deleted_at IS NULL ORDER BY student_no ASC",
     )
     .bind(cohort_id)
     .fetch_all(&state.db)
@@ -260,6 +286,29 @@ async fn get_student_internal(pool: &SqlitePool, id: i64) -> Result<Student, Str
         .map_err(|e| format!("获取学生失败: {}", e))
 }
 
+pub async fn ensure_student_belongs_to_cohort(
+    pool: &SqlitePool,
+    student_id: i64,
+    cohort_id: i64,
+) -> Result<(), String> {
+    let belongs: (i64,) =
+        sqlx::query_as("SELECT cohort_id FROM student WHERE id = ?1 AND deleted_at IS NULL")
+            .bind(student_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("学生 ID {} 不存在或已删除", student_id))?;
+
+    if belongs.0 != cohort_id {
+        return Err(format!(
+            "学生 ID {} 不属于届次 {} (学生届次: {})",
+            student_id, cohort_id, belongs.0
+        ));
+    }
+
+    Ok(())
+}
+
 // Excel 导入预览（不写入数据库，返回解析结果供用户确认）
 #[tauri::command]
 pub async fn preview_students_excel(
@@ -270,13 +319,17 @@ pub async fn preview_students_excel(
     let pool = &state.db;
     check_cohort_readonly(pool, cohort_id).await?;
 
-    let mut workbook: calamine::Xlsx<_> = calamine::open_workbook(&file_path)
-        .map_err(|e| format!("无法打开 Excel 文件: {}", e))?;
+    let mut workbook: calamine::Xlsx<_> =
+        calamine::open_workbook(&file_path).map_err(|e| format!("无法打开 Excel 文件: {}", e))?;
 
-    let sheet_name = workbook.sheet_names().first().cloned()
+    let sheet_name = workbook
+        .sheet_names()
+        .first()
+        .cloned()
         .ok_or("Excel 文件没有工作表".to_string())?;
 
-    let range = workbook.worksheet_range(&sheet_name)
+    let range = workbook
+        .worksheet_range(&sheet_name)
         .map_err(|e| format!("读取工作表失败: {}", e))?;
 
     let valid_genders = ["男", "女"];
@@ -288,12 +341,22 @@ pub async fn preview_students_excel(
     let mut file_student_nos: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for (row_idx, row) in range.rows().enumerate() {
-        if row_idx == 0 { continue; }
+        if row_idx == 0 {
+            continue;
+        }
 
-        let student_no = row.get(0).map(|c| c.to_string().trim().to_string()).unwrap_or_default();
-        let name = row.get(1).map(|c| c.to_string().trim().to_string()).unwrap_or_default();
+        let student_no = row
+            .get(0)
+            .map(|c| c.to_string().trim().to_string())
+            .unwrap_or_default();
+        let name = row
+            .get(1)
+            .map(|c| c.to_string().trim().to_string())
+            .unwrap_or_default();
 
-        if student_no.is_empty() && name.is_empty() { continue; }
+        if student_no.is_empty() && name.is_empty() {
+            continue;
+        }
 
         let mut row_errors: Vec<String> = Vec::new();
 
@@ -309,7 +372,10 @@ pub async fn preview_students_excel(
             row_errors.push(format!("学号'{}'在文件中重复出现", student_no));
         }
 
-        let gender_val = row.get(2).map(|c| c.to_string().trim().to_string()).filter(|s| !s.is_empty());
+        let gender_val = row
+            .get(2)
+            .map(|c| c.to_string().trim().to_string())
+            .filter(|s| !s.is_empty());
         if let Some(ref g) = gender_val {
             if !valid_genders.contains(&g.as_str()) {
                 row_errors.push(format!("性别'{}'无效", g));
@@ -327,10 +393,22 @@ pub async fn preview_students_excel(
             }
         }
 
-        let phone = row.get(3).map(|c| c.to_string().trim().to_string()).filter(|s| !s.is_empty());
-        let parent_name = row.get(4).map(|c| c.to_string().trim().to_string()).filter(|s| !s.is_empty());
-        let parent_phone = row.get(5).map(|c| c.to_string().trim().to_string()).filter(|s| !s.is_empty());
-        let group_name = row.get(6).map(|c| c.to_string().trim().to_string()).filter(|s| !s.is_empty());
+        let phone = row
+            .get(3)
+            .map(|c| c.to_string().trim().to_string())
+            .filter(|s| !s.is_empty());
+        let parent_name = row
+            .get(4)
+            .map(|c| c.to_string().trim().to_string())
+            .filter(|s| !s.is_empty());
+        let parent_phone = row
+            .get(5)
+            .map(|c| c.to_string().trim().to_string())
+            .filter(|s| !s.is_empty());
+        let group_name = row
+            .get(6)
+            .map(|c| c.to_string().trim().to_string())
+            .filter(|s| !s.is_empty());
 
         if row_errors.is_empty() {
             valid_count += 1;
@@ -374,13 +452,17 @@ pub async fn import_students_excel(
     check_cohort_readonly(pool, cohort_id).await?;
 
     // 打开 Excel 文件
-    let mut workbook: calamine::Xlsx<_> = calamine::open_workbook(&file_path)
-        .map_err(|e| format!("无法打开 Excel 文件: {}", e))?;
+    let mut workbook: calamine::Xlsx<_> =
+        calamine::open_workbook(&file_path).map_err(|e| format!("无法打开 Excel 文件: {}", e))?;
 
-    let sheet_name = workbook.sheet_names().first().cloned()
+    let sheet_name = workbook
+        .sheet_names()
+        .first()
+        .cloned()
         .ok_or("Excel 文件没有工作表".to_string())?;
 
-    let range = workbook.worksheet_range(&sheet_name)
+    let range = workbook
+        .worksheet_range(&sheet_name)
         .map_err(|e| format!("读取工作表失败: {}", e))?;
 
     let now = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -389,15 +471,31 @@ pub async fn import_students_excel(
     // 模板列: 0=学号, 1=姓名, 2=性别, 3=联系电话, 4=家长姓名, 5=家长电话, 6=小组
     let valid_genders = ["男", "女"];
 
-    let mut parsed_rows: Vec<(String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)> = Vec::new();
+    let mut parsed_rows: Vec<(
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
     let mut file_student_nos: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for (row_idx, row) in range.rows().enumerate() {
-        if row_idx == 0 { continue; } // 跳过标题行
+        if row_idx == 0 {
+            continue;
+        } // 跳过标题行
 
-        let student_no = row.get(0).map(|c| c.to_string().trim().to_string()).unwrap_or_default();
-        let name = row.get(1).map(|c| c.to_string().trim().to_string()).unwrap_or_default();
+        let student_no = row
+            .get(0)
+            .map(|c| c.to_string().trim().to_string())
+            .unwrap_or_default();
+        let name = row
+            .get(1)
+            .map(|c| c.to_string().trim().to_string())
+            .unwrap_or_default();
 
         // 跳过全空行
         if student_no.is_empty() && name.is_empty() {
@@ -416,15 +514,26 @@ pub async fn import_students_excel(
 
         // 检测文件内重复学号
         if !file_student_nos.insert(student_no.clone()) {
-            errors.push(format!("第{}行: 学号 '{}' 在文件中重复出现", row_idx + 1, student_no));
+            errors.push(format!(
+                "第{}行: 学号 '{}' 在文件中重复出现",
+                row_idx + 1,
+                student_no
+            ));
             continue;
         }
 
         // 性别枚举校验
-        let gender = row.get(2).map(|c| c.to_string().trim().to_string()).filter(|s| !s.is_empty());
+        let gender = row
+            .get(2)
+            .map(|c| c.to_string().trim().to_string())
+            .filter(|s| !s.is_empty());
         if let Some(ref g) = gender {
             if !valid_genders.contains(&g.as_str()) {
-                errors.push(format!("第{}行: 性别 '{}' 无效，只允许 '男' 或 '女'", row_idx + 1, g));
+                errors.push(format!(
+                    "第{}行: 性别 '{}' 无效，只允许 '男' 或 '女'",
+                    row_idx + 1,
+                    g
+                ));
                 continue;
             }
         }
@@ -439,16 +548,40 @@ pub async fn import_students_excel(
         .await
         .map_err(|e| e.to_string())?;
         if exists.0 > 0 {
-            errors.push(format!("第{}行: 学号 '{}' 在当前届次已存在", row_idx + 1, student_no));
+            errors.push(format!(
+                "第{}行: 学号 '{}' 在当前届次已存在",
+                row_idx + 1,
+                student_no
+            ));
             continue;
         }
 
-        let phone = row.get(3).map(|c| c.to_string().trim().to_string()).filter(|s| !s.is_empty());
-        let parent_name = row.get(4).map(|c| c.to_string().trim().to_string()).filter(|s| !s.is_empty());
-        let parent_phone = row.get(5).map(|c| c.to_string().trim().to_string()).filter(|s| !s.is_empty());
-        let group_name = row.get(6).map(|c| c.to_string().trim().to_string()).filter(|s| !s.is_empty());
+        let phone = row
+            .get(3)
+            .map(|c| c.to_string().trim().to_string())
+            .filter(|s| !s.is_empty());
+        let parent_name = row
+            .get(4)
+            .map(|c| c.to_string().trim().to_string())
+            .filter(|s| !s.is_empty());
+        let parent_phone = row
+            .get(5)
+            .map(|c| c.to_string().trim().to_string())
+            .filter(|s| !s.is_empty());
+        let group_name = row
+            .get(6)
+            .map(|c| c.to_string().trim().to_string())
+            .filter(|s| !s.is_empty());
 
-        parsed_rows.push((student_no, name, gender, phone, parent_name, parent_phone, group_name));
+        parsed_rows.push((
+            student_no,
+            name,
+            gender,
+            phone,
+            parent_name,
+            parent_phone,
+            group_name,
+        ));
     }
 
     // 阶段2: 如果有任何校验错误，不写入任何数据
@@ -481,7 +614,9 @@ pub async fn import_students_excel(
         .map_err(|e| format!("导入失败: {}", e))?;
     }
 
-    tx.commit().await.map_err(|e| format!("提交导入数据失败: {}", e))?;
+    tx.commit()
+        .await
+        .map_err(|e| format!("提交导入数据失败: {}", e))?;
 
     let success_count = parsed_rows.len() as i64;
     let empty_errors: Vec<String> = Vec::new();
@@ -498,7 +633,7 @@ pub async fn export_students_excel(
     file_path: String,
 ) -> Result<(), String> {
     let students = sqlx::query_as::<_, Student>(
-        "SELECT * FROM student WHERE cohort_id = ?1 AND deleted_at IS NULL ORDER BY student_no ASC"
+        "SELECT * FROM student WHERE cohort_id = ?1 AND deleted_at IS NULL ORDER BY student_no ASC",
     )
     .bind(cohort_id)
     .fetch_all(&state.db)
@@ -508,23 +643,52 @@ pub async fn export_students_excel(
     use rust_xlsxwriter::*;
     let mut workbook = Workbook::new();
     let mut sheet = Worksheet::new();
-    let header = ["学号", "姓名", "性别", "联系电话", "家长姓名", "家长电话", "小组", "状态"];
+    let header = [
+        "学号",
+        "姓名",
+        "性别",
+        "联系电话",
+        "家长姓名",
+        "家长电话",
+        "小组",
+        "状态",
+    ];
     for (ci, h) in header.iter().enumerate() {
-        sheet.write_string(0, ci as u16, *h).map_err(|e| e.to_string())?;
+        sheet
+            .write_string(0, ci as u16, *h)
+            .map_err(|e| e.to_string())?;
     }
     for (i, s) in students.iter().enumerate() {
         let row = (i + 1) as u32;
-        sheet.write_string(row, 0, &s.student_no).map_err(|e| e.to_string())?;
-        sheet.write_string(row, 1, &s.name).map_err(|e| e.to_string())?;
-        if let Some(ref v) = s.gender { sheet.write_string(row, 2, v).map_err(|e| e.to_string())?; }
-        if let Some(ref v) = s.phone { sheet.write_string(row, 3, v).map_err(|e| e.to_string())?; }
-        if let Some(ref v) = s.parent_name { sheet.write_string(row, 4, v).map_err(|e| e.to_string())?; }
-        if let Some(ref v) = s.parent_phone { sheet.write_string(row, 5, v).map_err(|e| e.to_string())?; }
-        if let Some(ref v) = s.group_name { sheet.write_string(row, 6, v).map_err(|e| e.to_string())?; }
-        sheet.write_string(row, 7, &s.status).map_err(|e| e.to_string())?;
+        sheet
+            .write_string(row, 0, &s.student_no)
+            .map_err(|e| e.to_string())?;
+        sheet
+            .write_string(row, 1, &s.name)
+            .map_err(|e| e.to_string())?;
+        if let Some(ref v) = s.gender {
+            sheet.write_string(row, 2, v).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref v) = s.phone {
+            sheet.write_string(row, 3, v).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref v) = s.parent_name {
+            sheet.write_string(row, 4, v).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref v) = s.parent_phone {
+            sheet.write_string(row, 5, v).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref v) = s.group_name {
+            sheet.write_string(row, 6, v).map_err(|e| e.to_string())?;
+        }
+        sheet
+            .write_string(row, 7, &s.status)
+            .map_err(|e| e.to_string())?;
     }
     workbook.push_worksheet(sheet);
-    workbook.save(&file_path).map_err(|e| format!("导出失败: {}", e))?;
+    workbook
+        .save(&file_path)
+        .map_err(|e| format!("导出失败: {}", e))?;
 
     Ok(())
 }

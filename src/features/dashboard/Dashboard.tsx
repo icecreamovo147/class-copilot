@@ -1,4 +1,5 @@
-import { Card, Row, Col, Statistic, Button, Table, Tag, List, Typography, Empty, Spin, Alert } from 'antd';
+import { Line } from '@ant-design/charts';
+import { Card, Row, Col, Statistic, Button, Table, Tag, List, Typography, Empty, Spin, Alert, Space } from 'antd';
 import {
   UserOutlined,
   BookOutlined,
@@ -12,16 +13,42 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/app/store';
 import { statisticsService } from '@/services';
+import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const { currentCohort, isReadonly } = useAppStore();
+  const today = dayjs().format('YYYY-MM-DD');
+
+  const goToStudents = (focusOnly = false) => navigate(focusOnly ? '/students?focus=1' : '/students');
+  const goToHomeworkToday = () => navigate(`/homework?publish_date=${today}`);
+  const goToHomeworkPending = () => navigate('/homework?incomplete_only=1');
+  const goToAttendanceToday = () => navigate(`/attendance?tab=query&start_date=${today}&end_date=${today}`);
+  const goToAttendanceRegister = () => navigate(`/attendance?tab=register&date=${today}`);
 
   const { data: stats, isLoading, error } = useQuery({
     queryKey: ['dashboard', currentCohort?.id],
     queryFn: () => statisticsService.dashboard(currentCohort!.id),
+    enabled: !!currentCohort,
+  });
+
+  const { data: homeworkTrend = [] } = useQuery({
+    queryKey: ['dashboard', 'homeworkTrend', currentCohort?.id],
+    queryFn: () => statisticsService.homeworkTrend(currentCohort!.id),
+    enabled: !!currentCohort,
+  });
+
+  const { data: attendanceTrend = [] } = useQuery({
+    queryKey: ['dashboard', 'attendanceTrend', currentCohort?.id],
+    queryFn: () => statisticsService.attendanceTrend(currentCohort!.id, '2000-01-01', '2099-12-31'),
+    enabled: !!currentCohort,
+  });
+
+  const { data: scoreTrend = [] } = useQuery({
+    queryKey: ['dashboard', 'scoreTrend', currentCohort?.id],
+    queryFn: () => statisticsService.scoreTrend(currentCohort!.id),
     enabled: !!currentCohort,
   });
 
@@ -54,54 +81,8 @@ export default function Dashboard() {
           {currentCohort.cohort_name} {currentCohort.class_name}
           {isReadonly && <Tag style={{ marginLeft: 8 }}>已归档</Tag>}
         </Title>
-      </div>
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} sm={12} md={6}>
-          <Card hoverable onClick={() => navigate('/students')}>
-            <Statistic title="班级人数" value={stats.total_students} prefix={<UserOutlined />} suffix={`人`} />
-            <Text type="secondary">男 {stats.male_count} / 女 {stats.female_count}</Text>
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} md={6}>
-          <Card hoverable onClick={() => navigate('/homework')}>
-            <Statistic
-              title="今日作业完成率"
-              value={stats.today_homework_rate * 100}
-              suffix="%"
-              precision={1}
-              prefix={<BookOutlined />}
-              valueStyle={{ color: stats.today_homework_rate >= 0.8 ? '#3f8600' : '#cf1322' }}
-            />
-            <Text type="secondary">共{stats.today_homework_count}项 / {stats.today_homework_completed}/{stats.today_homework_total_records} 已完成</Text>
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} md={6}>
-          <Card hoverable onClick={() => navigate('/attendance')}>
-            <Statistic title="今日考勤" value={stats.today_attendance_normal} prefix={<CalendarOutlined />} suffix={`人正常`} />
-            <Text type="secondary">
-              迟到{stats.today_attendance_late} 请假{stats.today_attendance_leave} 旷课{stats.today_attendance_absent}
-            </Text>
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} md={6}>
-          <Card>
-            <Statistic title="待处理事项" value={stats.pending_homework + (stats.pending_attendance ? 1 : 0)} prefix={<WarningOutlined />} />
-            <div>
-              {stats.pending_homework > 0 && (
-                <Text type="secondary" style={{ display: 'block' }}>未登记作业：{stats.pending_homework} 项</Text>
-              )}
-              {stats.pending_attendance && (
-                <Text type="secondary" style={{ display: 'block' }}>今日考勤未登记</Text>
-              )}
-            </div>
-          </Card>
-        </Col>
-      </Row>
-
-      <div className="action-bar" style={{ marginTop: 16 }}>
         {!isReadonly && (
-          <>
+          <Space>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/students')}>
               新增学生
             </Button>
@@ -114,9 +95,56 @@ export default function Dashboard() {
             <Button icon={<FileExcelOutlined />} onClick={() => navigate('/scores')}>
               导入成绩
             </Button>
-          </>
+          </Space>
         )}
       </div>
+
+      <Row gutter={[16, 16]}>
+        <Col xs={24} sm={12} md={6}>
+          <Card hoverable onClick={() => goToStudents(false)}>
+            <Statistic title="班级人数" value={stats.total_students} prefix={<UserOutlined />} suffix={`人`} />
+            <Text type="secondary">男 {stats.male_count} / 女 {stats.female_count}</Text>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={6}>
+          <Card hoverable onClick={goToHomeworkToday}>
+            <Statistic
+              title="今日作业完成率"
+              value={stats.today_homework_rate * 100}
+              suffix="%"
+              precision={1}
+              prefix={<BookOutlined />}
+              valueStyle={{ color: stats.today_homework_rate >= 0.8 ? '#3f8600' : '#cf1322' }}
+            />
+            <Text type="secondary">共{stats.today_homework_count}项 / {stats.today_homework_completed}/{stats.today_homework_total_records} 已完成</Text>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={6}>
+          <Card hoverable onClick={goToAttendanceToday}>
+            <Statistic title="今日考勤" value={stats.today_attendance_normal} prefix={<CalendarOutlined />} suffix={`人正常`} />
+            <Text type="secondary">
+              迟到{stats.today_attendance_late} 请假{stats.today_attendance_leave} 旷课{stats.today_attendance_absent}
+            </Text>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={6}>
+          <Card hoverable onClick={stats.pending_attendance ? goToAttendanceRegister : goToHomeworkPending}>
+            <Statistic title="待处理事项" value={stats.pending_homework + (stats.pending_attendance ? 1 : 0)} prefix={<WarningOutlined />} />
+            <div>
+              {stats.pending_homework > 0 && (
+                <Button type="link" style={{ padding: 0, height: 'auto' }} onClick={(event) => { event.stopPropagation(); goToHomeworkPending(); }}>
+                  未登记作业：{stats.pending_homework} 项
+                </Button>
+              )}
+              {stats.pending_attendance && (
+                <Button type="link" style={{ padding: 0, height: 'auto', display: 'block' }} onClick={(event) => { event.stopPropagation(); goToAttendanceRegister(); }}>
+                  今日考勤未登记
+                </Button>
+              )}
+            </div>
+          </Card>
+        </Col>
+      </Row>
 
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} lg={12}>
@@ -166,6 +194,60 @@ export default function Dashboard() {
         </Col>
       </Row>
 
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={24} lg={8}>
+          <Card title="作业趋势" size="small">
+            {homeworkTrend.length > 0 ? (
+              <Line
+                data={homeworkTrend.map((item) => ({
+                  date: item.publish_date,
+                  value: Number((item.completion_rate * 100).toFixed(1)),
+                }))}
+                xField="date"
+                yField="value"
+                point={{ size: 3 }}
+              />
+            ) : (
+              <Empty description="暂无作业趋势" />
+            )}
+          </Card>
+        </Col>
+        <Col xs={24} lg={8}>
+          <Card title="考勤趋势" size="small">
+            {attendanceTrend.length > 0 ? (
+              <Line
+                data={attendanceTrend.map((item) => ({
+                  date: item.attendance_date,
+                  value: Number((item.normal_rate * 100).toFixed(1)),
+                }))}
+                xField="date"
+                yField="value"
+                point={{ size: 3 }}
+              />
+            ) : (
+              <Empty description="暂无考勤趋势" />
+            )}
+          </Card>
+        </Col>
+        <Col xs={24} lg={8}>
+          <Card title="成绩趋势" size="small">
+            {scoreTrend.length > 0 ? (
+              <Line
+                data={scoreTrend.map((item) => ({
+                  exam: item.exam_name,
+                  value: Number(item.avg_score.toFixed(1)),
+                }))}
+                xField="exam"
+                yField="value"
+                point={{ size: 3 }}
+              />
+            ) : (
+              <Empty description="暂无成绩趋势" />
+            )}
+          </Card>
+        </Col>
+      </Row>
+
       {stats.focus_students.length > 0 && (
         <Card title="重点关注学生" size="small" style={{ marginTop: 16 }}>
           <List
@@ -175,6 +257,9 @@ export default function Dashboard() {
                 actions={[
                   <Button type="link" onClick={() => navigate(`/students/${item.id}`)}>
                     查看详情
+                  </Button>,
+                  <Button type="link" onClick={() => goToStudents(true)}>
+                    查看关注名单
                   </Button>,
                 ]}
               >

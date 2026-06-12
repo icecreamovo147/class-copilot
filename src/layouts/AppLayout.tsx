@@ -64,6 +64,12 @@ export default function AppLayout() {
     }
   }, [currentData, cohortsData, setCurrentCohort]);
 
+  useEffect(() => {
+    if (!currentData && cohortsData) {
+      setInitializing(false);
+    }
+  }, [currentData, cohortsData]);
+
   const handleCohortChange = async (cohortId: number) => {
     try {
       await cohortService.setCurrent(cohortId);
@@ -165,7 +171,7 @@ export default function AppLayout() {
             />
           </Space>
         </Header>
-        <Content style={{ margin: 24, minHeight: 0, overflowY: 'auto' }}>
+        <Content style={{ margin: 24, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
           {!currentCohort && !initializing && location.pathname !== '/cohorts' && location.pathname !== '/settings' ? (
             <div style={{ textAlign: 'center', padding: '80px 0' }}>
               <Typography.Title level={4}>尚未创建届次</Typography.Title>
@@ -177,7 +183,9 @@ export default function AppLayout() {
               </Button>
             </div>
           ) : (
-            <Outlet />
+            <div className="page-transition" key={location.pathname}>
+              <Outlet />
+            </div>
           )}
         </Content>
       </Layout>

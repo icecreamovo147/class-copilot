@@ -43,9 +43,24 @@ export interface Subject {
   id: number;
   name: string;
   sort_order: number;
+  is_active: boolean;
   remark: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ExamSubjectConfig {
+  id?: number;
+  exam_id?: number;
+  subject_id: number;
+  subject_name?: string;
+  full_score: number;
+  pass_score: number;
+  excellent_score: number;
+  sort_order: number;
+  is_active?: boolean;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface Homework {
@@ -55,6 +70,8 @@ export interface Homework {
   subject_id: number | null;
   subject_name: string | null;
   description: string | null;
+  attachment_name?: string | null;
+  attachment_path?: string | null;
   publish_date: string;
   deadline: string | null;
   remark: string | null;
@@ -91,6 +108,9 @@ export interface Attendance {
   student_id: number;
   attendance_date: string;
   status: AttendanceStatus;
+  leave_type?: string | null;
+  leave_start_date?: string | null;
+  leave_end_date?: string | null;
   reason: string | null;
   remark: string | null;
   created_at: string;
@@ -169,6 +189,25 @@ export interface BehaviorRecord {
   student_no?: string;
 }
 
+export interface ClassFeeRecord {
+  id: number;
+  cohort_id: number;
+  fee_date: string;
+  fee_type: string;
+  category: string | null;
+  title: string;
+  amount: number;
+  student_id: number | null;
+  payment_status: string | null;
+  voucher_path: string | null;
+  remark: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  student_name?: string;
+  student_no?: string;
+}
+
 export interface SystemConfig {
   id: number;
   config_key: string;
@@ -219,6 +258,25 @@ export interface DashboardStats {
     name: string;
     student_no: string;
     reason: string;
+  }>;
+}
+
+export interface SettingsOverview {
+  school_name: string | null;
+  head_teacher: string | null;
+  default_semester: string | null;
+  default_backup_dir: string;
+  reminder_threshold: number;
+  export_preference: 'xlsx' | 'pdf' | 'both';
+  app_version: string;
+  database_version: number;
+  data_dir: string;
+  database_path: string;
+  recent_backups: Array<{
+    file_name: string;
+    file_path: string;
+    size_bytes: number;
+    modified_at: string;
   }>;
 }
 

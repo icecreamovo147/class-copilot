@@ -1,15 +1,19 @@
 import { invoke } from '@tauri-apps/api/core';
+import { logger } from '@/utils/logger';
 import type {
   Cohort,
   Student,
   Subject,
+  ExamSubjectConfig,
   Homework,
   HomeworkRecord,
   Attendance,
   Exam,
   Score,
   BehaviorRecord,
+  ClassFeeRecord,
   DashboardStats,
+  SettingsOverview,
 } from '@/types';
 
 function toCamelCase(value: string): string {
@@ -46,9 +50,15 @@ export function getCommandErrorMessage(error: unknown): string {
 
 // Tauri 默认将 Rust snake_case 命令参数暴露为 camelCase。
 async function cmd<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  const start = performance.now();
   try {
-    return await invoke<T>(command, normalizeCommandArgs(args));
+    const result = await invoke<T>(command, normalizeCommandArgs(args));
+    const elapsed = (performance.now() - start).toFixed(1);
+    logger.debug(`[IPC] ${command} ✓ ${elapsed}ms`);
+    return result;
   } catch (error) {
+    const elapsed = (performance.now() - start).toFixed(1);
+    logger.error(`[IPC] ${command} ✗ ${elapsed}ms`, error);
     throw new Error(getCommandErrorMessage(error));
   }
 }
@@ -76,7 +86,7 @@ export const cohortService = {
 
 // ==================== Student Service ====================
 export const studentService = {
-  list: (cohortId: number, params?: { search?: string; gender?: string; group_name?: string; status?: string; page?: number; page_size?: number }) =>
+  list: (cohortId: number, params?: { search?: string; gender?: string; group_name?: string; status?: string; is_focus?: boolean; page?: number; page_size?: number }) =>
     cmd<{ data: Student[]; total: number; page: number; page_size: number }>('get_students', { cohort_id: cohortId, ...params }),
 
   getAll: (cohortId: number) => cmd<Student[]>('get_all_students', { cohort_id: cohortId }),
@@ -103,7 +113,7 @@ export const studentService = {
 
 // ==================== Subject Service ====================
 export const subjectService = {
-  list: () => cmd<Subject[]>('get_subjects'),
+  list: (params?: { active_only?: boolean }) => cmd<Subject[]>('get_subjects', params),
   create: (data: Partial<Subject>) => cmd<Subject>('create_subject', data),
   update: (id: number, data: Partial<Subject>) => cmd<Subject>('update_subject', { id, ...data }),
   delete: (id: number) => cmd<void>('delete_subject', { id }),
@@ -111,7 +121,7 @@ export const subjectService = {
 
 // ==================== Homework Service ====================
 export const homeworkService = {
-  list: (cohortId: number, params?: { search?: string; subject_id?: number; page?: number; page_size?: number }) =>
+  list: (cohortId: number, params?: { search?: string; subject_id?: number; publish_date?: string; incomplete_only?: boolean; page?: number; page_size?: number }) =>
     cmd<{ data: Homework[]; total: number; page: number; page_size: number }>('get_homeworks', { cohort_id: cohortId, ...params }),
 
   getById: (id: number) => cmd<Homework>('get_homework', { id }),
@@ -132,6 +142,8 @@ export const homeworkService = {
   batchUpdateRecords: (homeworkId: number, studentIds: number[], status: string) =>
     cmd<void>('batch_update_homework_records', { homework_id: homeworkId, student_ids: studentIds, status }),
 
+  openAttachment: (id: number) => cmd<void>('open_homework_attachment', { id }),
+
   exportIncomplete: (homeworkId: number, filePath: string) =>
     cmd<void>('export_incomplete_homework', { homework_id: homeworkId, file_path: filePath }),
 };
@@ -141,7 +153,7 @@ export const attendanceService = {
   getByDate: (cohortId: number, date: string) =>
     cmd<Attendance[]>('get_attendance_by_date', { cohort_id: cohortId, date }),
 
-  saveAll: (cohortId: number, date: string, records: Array<{ student_id: number; status: string; reason?: string; remark?: string }>) =>
+  saveAll: (cohortId: number, date: string, records: Array<{ student_id: number; status: string; reason?: string; remark?: string; leave_type?: string; leave_start_date?: string; leave_end_date?: string }>) =>
     cmd<void>('save_attendance', { cohort_id: cohortId, date, records }),
 
   setAllNormal: (cohortId: number, date: string) =>
@@ -165,6 +177,9 @@ export const examService = {
   create: (data: Partial<Exam>) => cmd<Exam>('create_exam', data),
   update: (id: number, data: Partial<Exam>) => cmd<Exam>('update_exam', { id, ...data }),
   delete: (id: number) => cmd<void>('delete_exam', { id }),
+  getSubjectConfigs: (examId: number) => cmd<ExamSubjectConfig[]>('get_exam_subject_configs', { exam_id: examId }),
+  saveSubjectConfigs: (examId: number, configs: ExamSubjectConfig[]) =>
+    cmd<void>('save_exam_subject_configs', { exam_id: examId, configs }),
 };
 
 export const scoreService = {
@@ -174,11 +189,21 @@ export const scoreService = {
   save: (examId: number, subjectId: number, scores: Array<{ student_id: number; score_value: number | null; remark?: string }>) =>
     cmd<void>('save_scores', { exam_id: examId, subject_id: subjectId, scores }),
 
+  previewExcel: (examId: number, subjectId: number, filePath: string) =>
+    cmd<{
+      total_rows: number;
+      valid_rows: number;
+      error_rows: number;
+      rows: Array<Record<string, unknown>>;
+      errors: string[];
+      warnings: string[];
+    }>('preview_scores_excel', { exam_id: examId, subject_id: subjectId, file_path: filePath }),
+
   importExcel: (examId: number, subjectId: number, filePath: string) =>
-    cmd<{ success: number; errors: string[] }>('import_scores_excel', { exam_id: examId, subject_id: subjectId, file_path: filePath }),
+    cmd<{ success: number; errors: string[]; warnings: string[] }>('import_scores_excel', { exam_id: examId, subject_id: subjectId, file_path: filePath }),
 
   statistics: (examId: number, subjectId: number) =>
-    cmd<{ avg_score: number; max_score: number; min_score: number; pass_rate: number; excellent_rate: number }>(
+    cmd<{ avg_score: number; max_score: number; min_score: number; pass_rate: number; excellent_rate: number; full_score: number; pass_score: number; excellent_score: number }>(
       'score_statistics', { exam_id: examId, subject_id: subjectId }
     ),
 
@@ -186,6 +211,9 @@ export const scoreService = {
     cmd<Array<{ student_id: number; student_name: string; student_no: string; total_score: number; rank_no: number }>>(
       'score_rankings', { exam_id: examId }
     ),
+
+  exportExcel: (examId: number, subjectId: number, filePath: string) =>
+    cmd<void>('export_scores_excel', { exam_id: examId, subject_id: subjectId, file_path: filePath }),
 };
 
 // ==================== Affairs Service ====================
@@ -195,21 +223,47 @@ export const noticeService = {
   create: (data: any) => cmd<any>('create_notice', data),
   update: (id: number, data: any) => cmd<any>('update_notice', { id, ...data }),
   delete: (id: number) => cmd<void>('delete_notice', { id }),
+  exportExcel: (cohortId: number, filePath: string, params?: { search?: string }) =>
+    cmd<void>('export_notices_excel', { cohort_id: cohortId, file_path: filePath, ...params }),
 };
 
 export const dutyService = {
-  list: (cohortId: number, params?: { search?: string; page?: number; page_size?: number }) =>
+  list: (cohortId: number, params?: { search?: string; status?: string; page?: number; page_size?: number }) =>
     cmd<{ data: any[]; total: number; page: number; page_size: number }>('get_duties', { cohort_id: cohortId, ...params }),
   create: (data: any) => cmd<any>('create_duty', data),
   update: (id: number, data: any) => cmd<any>('update_duty', { id, ...data }),
   delete: (id: number) => cmd<void>('delete_duty', { id }),
+  exportExcel: (cohortId: number, filePath: string, params?: { status?: string }) =>
+    cmd<void>('export_duties_excel', { cohort_id: cohortId, file_path: filePath, ...params }),
 };
 
 export const behaviorService = {
   list: (cohortId: number, params?: { student_id?: number; type?: string; page?: number; page_size?: number }) =>
-    cmd<{ data: any[]; total: number; page: number; page_size: number }>('get_behavior_records', { cohort_id: cohortId, ...params }),
-  create: (data: any) => cmd<any>('create_behavior_record', data),
+    cmd<{ data: any[]; total: number; page: number; page_size: number }>('get_behavior_records', {
+      cohort_id: cohortId,
+      student_id: params?.student_id,
+      record_type: params?.type,
+      page: params?.page,
+      page_size: params?.page_size,
+    }),
+  create: (data: any) => cmd<any>('create_behavior_record', { ...data, record_type: data.type }),
   delete: (id: number) => cmd<void>('delete_behavior_record', { id }),
+};
+
+export const classFeeService = {
+  list: (cohortId: number, params?: { fee_type?: string; student_id?: number; payment_status?: string; page?: number; page_size?: number }) =>
+    cmd<{
+      data: ClassFeeRecord[];
+      total: number;
+      page: number;
+      page_size: number;
+      summary: { income_total: number; expense_total: number; balance: number; outstanding_total: number };
+    }>('get_class_fee_records', { cohort_id: cohortId, ...params }),
+  create: (data: Partial<ClassFeeRecord>) => cmd<ClassFeeRecord>('create_class_fee_record', data),
+  update: (id: number, data: Partial<ClassFeeRecord>) => cmd<ClassFeeRecord>('update_class_fee_record', { id, ...data }),
+  delete: (id: number) => cmd<void>('delete_class_fee_record', { id }),
+  exportExcel: (cohortId: number, filePath: string, params?: { fee_type?: string; student_id?: number; payment_status?: string }) =>
+    cmd<void>('export_class_fee_excel', { cohort_id: cohortId, file_path: filePath, ...params }),
 };
 
 // ==================== Statistics Service ====================
@@ -221,9 +275,19 @@ export const statisticsService = {
       'homework_statistics', { cohort_id: cohortId }
     ),
 
+  homeworkTrend: (cohortId: number) =>
+    cmd<Array<{ homework_id: number; title: string; publish_date: string; total_count: number; completed_count: number; incomplete_count: number; completion_rate: number }>>(
+      'homework_trend_statistics', { cohort_id: cohortId }
+    ),
+
   attendanceStats: (cohortId: number, startDate: string, endDate: string) =>
     cmd<{ total_days: number; records: Array<{ student_id: number; student_name: string; student_no: string; total: number; normal: number; late: number; early: number; leave: number; absent: number; rate: number }> }>(
       'attendance_statistics_cohort', { cohort_id: cohortId, start_date: startDate, end_date: endDate }
+    ),
+
+  attendanceTrend: (cohortId: number, startDate: string, endDate: string) =>
+    cmd<Array<{ attendance_date: string; total_count: number; normal_count: number; late_count: number; early_count: number; leave_count: number; absent_count: number; normal_rate: number }>>(
+      'attendance_trend_statistics', { cohort_id: cohortId, start_date: startDate, end_date: endDate }
     ),
 
   scoreStats: (cohortId: number) =>
@@ -231,14 +295,55 @@ export const statisticsService = {
       'score_statistics_cohort', { cohort_id: cohortId }
     ),
 
+  scoreTrend: (cohortId: number) =>
+    cmd<Array<{ exam_id: number; exam_name: string; exam_point: string; subject_name: string; avg_score: number }>>(
+      'score_trend_statistics', { cohort_id: cohortId }
+    ),
+
+  crossCohortComparison: (cohortIds: number[]) =>
+    cmd<Array<{
+      cohort_id: number;
+      cohort_name: string;
+      class_name: string;
+      status: string;
+      student_count: number;
+      homework_completion_rate: number;
+      attendance_rate: number;
+      avg_score: number;
+      missing_score_data: boolean;
+      behavior_count: number;
+      behavior_score_total: number;
+    }>>('cross_cohort_comparison', { cohort_ids: cohortIds }),
+
+  exportCrossCohortComparison: (cohortIds: number[], filePath: string) =>
+    cmd<void>('export_cross_cohort_comparison', { cohort_ids: cohortIds, file_path: filePath }),
+
+  exportCrossCohortComparisonPdf: (cohortIds: number[], filePath: string) =>
+    cmd<void>('export_cross_cohort_comparison_pdf', { cohort_ids: cohortIds, file_path: filePath }),
+
+  exportCohortStatisticsExcel: (cohortId: number, filePath: string) =>
+    cmd<void>('export_cohort_statistics_excel', { cohort_id: cohortId, file_path: filePath }),
+
+  exportCohortStatisticsPdf: (cohortId: number, filePath: string) =>
+    cmd<void>('export_cohort_statistics_pdf', { cohort_id: cohortId, file_path: filePath }),
+
   studentProfile: (studentId: number) =>
     cmd<{
       student: Student;
       homework: { total: number; completed: number; rate: number; consecutive_incomplete: number };
       attendance: { total: number; normal: number; abnormal: number; rate: number };
-      scores: Array<{ exam_name: string; subject_name: string; score_value: number | null }>;
+      scores: Array<{ exam_name: string; exam_point: string; subject_name: string; score_value: number | null }>;
+      score_trend: Array<{ exam_name: string; exam_point: string; subject_name: string; score_value: number | null }>;
       behaviors: BehaviorRecord[];
+      focus_reasons: string[];
+      overall_evaluation: string;
     }>('get_student_profile', { student_id: studentId }),
+
+  exportStudentGrowthArchive: (studentId: number, filePath: string) =>
+    cmd<void>('export_student_growth_archive', { student_id: studentId, file_path: filePath }),
+
+  exportStudentGrowthArchivePdf: (studentId: number, filePath: string) =>
+    cmd<void>('export_student_growth_archive_pdf', { student_id: studentId, file_path: filePath }),
 };
 
 // ==================== Backup Service ====================
@@ -253,6 +358,16 @@ export const backupService = {
 export const configService = {
   get: (key: string) => cmd<string | null>('get_config', { key }),
   set: (key: string, value: string) => cmd<void>('set_config', { key, value }),
+  getOverview: () => cmd<SettingsOverview>('get_settings_overview'),
+  savePreferences: (data: {
+    school_name?: string;
+    head_teacher?: string;
+    default_semester?: string;
+    default_backup_dir?: string;
+    reminder_threshold?: number;
+    export_preference?: 'xlsx' | 'pdf' | 'both';
+  }) => cmd<void>('save_settings_preferences', data as Record<string, unknown>),
+  recentBackups: () => cmd<SettingsOverview['recent_backups']>('get_recent_backups'),
   downloadTemplate: (type: string, filePath: string) =>
     cmd<void>('download_template', { template_type: type, file_path: filePath }),
 };

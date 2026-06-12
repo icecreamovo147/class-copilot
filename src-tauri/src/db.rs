@@ -1,8 +1,9 @@
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqlitePool};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use sqlx::ConnectOptions;
+use sqlx::Row;
 use std::path::PathBuf;
 use std::str::FromStr;
-use log::info;
+use tracing::info;
 
 const MIGRATIONS: &[&str] = &[
     // 初始版本 v1
@@ -47,6 +48,7 @@ const MIGRATIONS: &[&str] = &[
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
         sort_order INTEGER DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1,
         remark TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -58,6 +60,8 @@ const MIGRATIONS: &[&str] = &[
         subject_id INTEGER,
         subject_name TEXT,
         description TEXT,
+        attachment_name TEXT,
+        attachment_path TEXT,
         publish_date TEXT NOT NULL,
         deadline TEXT,
         remark TEXT,
@@ -105,6 +109,20 @@ const MIGRATIONS: &[&str] = &[
         updated_at TEXT NOT NULL,
         deleted_at TEXT,
         FOREIGN KEY(cohort_id) REFERENCES cohort(id)
+    );",
+    "CREATE TABLE IF NOT EXISTS exam_subject_config (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        exam_id INTEGER NOT NULL,
+        subject_id INTEGER NOT NULL,
+        full_score REAL NOT NULL DEFAULT 100,
+        pass_score REAL NOT NULL DEFAULT 60,
+        excellent_score REAL NOT NULL DEFAULT 90,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(exam_id, subject_id),
+        FOREIGN KEY(exam_id) REFERENCES exam(id),
+        FOREIGN KEY(subject_id) REFERENCES subject(id)
     );",
     "CREATE TABLE IF NOT EXISTS score (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -161,6 +179,24 @@ const MIGRATIONS: &[&str] = &[
         FOREIGN KEY(cohort_id) REFERENCES cohort(id),
         FOREIGN KEY(student_id) REFERENCES student(id)
     );",
+    "CREATE TABLE IF NOT EXISTS class_fee (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cohort_id INTEGER NOT NULL,
+        fee_date TEXT NOT NULL,
+        fee_type TEXT NOT NULL,
+        category TEXT,
+        title TEXT NOT NULL,
+        amount REAL NOT NULL,
+        student_id INTEGER,
+        payment_status TEXT,
+        voucher_path TEXT,
+        remark TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT,
+        FOREIGN KEY(cohort_id) REFERENCES cohort(id),
+        FOREIGN KEY(student_id) REFERENCES student(id)
+    );",
     "CREATE TABLE IF NOT EXISTS system_config (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         config_key TEXT NOT NULL UNIQUE,
@@ -176,8 +212,11 @@ const MIGRATIONS: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_attendance_cohort ON attendance(cohort_id);",
     "CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(attendance_date);",
     "CREATE INDEX IF NOT EXISTS idx_exam_cohort ON exam(cohort_id);",
+    "CREATE INDEX IF NOT EXISTS idx_exam_subject_config_exam ON exam_subject_config(exam_id);",
     "CREATE INDEX IF NOT EXISTS idx_score_student ON score(student_id);",
     "CREATE INDEX IF NOT EXISTS idx_behavior_cohort ON behavior_record(cohort_id);",
+    "CREATE INDEX IF NOT EXISTS idx_class_fee_cohort ON class_fee(cohort_id);",
+    "CREATE INDEX IF NOT EXISTS idx_class_fee_date ON class_fee(fee_date);",
     "CREATE INDEX IF NOT EXISTS idx_duty_cohort ON duty(cohort_id);",
     "CREATE INDEX IF NOT EXISTS idx_notice_cohort ON notice(cohort_id);",
 ];
@@ -212,7 +251,7 @@ pub async fn init_db(db_path: &PathBuf) -> Result<SqlitePool, sqlx::Error> {
     Ok(pool)
 }
 
-async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+pub(crate) async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     for (i, migration) in MIGRATIONS.iter().enumerate() {
         sqlx::query(migration).execute(pool).await.map_err(|e| {
             log::error!("Migration {} failed: {}", i, e);
@@ -220,12 +259,21 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         })?;
     }
 
+    ensure_subject_columns(pool).await?;
+    ensure_homework_columns(pool).await?;
+    ensure_attendance_columns(pool).await?;
+    sqlx::query(&format!("PRAGMA user_version = {}", MIGRATIONS.len()))
+        .execute(pool)
+        .await?;
+
     // 检查并插入默认科目
-    let default_subjects = ["语文", "数学", "英语", "物理", "化学", "生物", "历史", "地理", "政治"];
+    let default_subjects = [
+        "语文", "数学", "英语", "物理", "化学", "生物", "历史", "地理", "政治",
+    ];
     for subject in default_subjects {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         sqlx::query(
-            "INSERT OR IGNORE INTO subject (name, sort_order, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)"
+            "INSERT OR IGNORE INTO subject (name, sort_order, is_active, created_at, updated_at) VALUES (?1, ?2, 1, ?3, ?4)"
         )
         .bind(subject)
         .bind(0)
@@ -239,21 +287,107 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-async fn ensure_current_cohort(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    // 检查是否有当前届次
-    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cohort WHERE is_current = 1 AND status = '使用中'")
-        .fetch_one(pool)
+async fn ensure_subject_columns(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let columns = sqlx::query("PRAGMA table_info(subject)")
+        .fetch_all(pool)
         .await?;
+    let has_is_active = columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "is_active");
+    if !has_is_active {
+        sqlx::query("ALTER TABLE subject ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn ensure_homework_columns(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let columns = sqlx::query("PRAGMA table_info(homework)")
+        .fetch_all(pool)
+        .await?;
+    let has_attachment_name = columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "attachment_name");
+    let has_attachment_path = columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "attachment_path");
+    if !has_attachment_name {
+        sqlx::query("ALTER TABLE homework ADD COLUMN attachment_name TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !has_attachment_path {
+        sqlx::query("ALTER TABLE homework ADD COLUMN attachment_path TEXT")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn ensure_attendance_columns(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let columns = sqlx::query("PRAGMA table_info(attendance)")
+        .fetch_all(pool)
+        .await?;
+    let has_leave_type = columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "leave_type");
+    let has_leave_start_date = columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "leave_start_date");
+    let has_leave_end_date = columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "leave_end_date");
+    if !has_leave_type {
+        sqlx::query("ALTER TABLE attendance ADD COLUMN leave_type TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !has_leave_start_date {
+        sqlx::query("ALTER TABLE attendance ADD COLUMN leave_start_date TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !has_leave_end_date {
+        sqlx::query("ALTER TABLE attendance ADD COLUMN leave_end_date TEXT")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn ensure_current_cohort(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    // 检查当前届次数量，并在脏数据下收敛为唯一的“使用中”届次。
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM cohort WHERE is_current = 1 AND status = '使用中'")
+            .fetch_one(pool)
+            .await?;
 
     if count.0 == 0 {
         // 如果有使用中的届次但没有标记为当前，将最早的一个设为当前
         let result = sqlx::query_as::<_, (i64,)>(
-            "SELECT id FROM cohort WHERE status = '使用中' ORDER BY id ASC LIMIT 1"
+            "SELECT id FROM cohort WHERE status = '使用中' ORDER BY id ASC LIMIT 1",
         )
         .fetch_optional(pool)
         .await?;
 
         if let Some((id,)) = result {
+            sqlx::query("UPDATE cohort SET is_current = 1 WHERE id = ?1")
+                .bind(id)
+                .execute(pool)
+                .await?;
+        }
+    } else if count.0 > 1 {
+        let result = sqlx::query_as::<_, (i64,)>(
+            "SELECT id FROM cohort WHERE is_current = 1 AND status = '使用中' ORDER BY id ASC LIMIT 1",
+        )
+        .fetch_optional(pool)
+        .await?;
+
+        if let Some((id,)) = result {
+            sqlx::query("UPDATE cohort SET is_current = 0 WHERE status = '使用中'")
+                .execute(pool)
+                .await?;
             sqlx::query("UPDATE cohort SET is_current = 1 WHERE id = ?1")
                 .bind(id)
                 .execute(pool)
