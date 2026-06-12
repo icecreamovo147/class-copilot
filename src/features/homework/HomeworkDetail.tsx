@@ -1,4 +1,4 @@
-import { Card, Table, Button, Select, Tag, message, Typography, Space, Spin, Alert, Empty, Descriptions } from 'antd';
+import { Card, Table, Button, Select, Tag, message, Typography, Space, Spin, Alert, Empty, Descriptions, Input } from 'antd';
 import { LinkOutlined } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -41,6 +41,7 @@ export default function HomeworkDetail() {
       homeworkService.updateRecord(recordId, status, remark),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['homeworkRecords', Number(id)] });
+      queryClient.invalidateQueries({ queryKey: ['homeworks'] });
       message.success('状态已更新');
     },
     onError: (err: Error) => message.error(err.message),
@@ -116,7 +117,30 @@ export default function HomeworkDetail() {
         />
       ),
     },
-    { title: '备注', dataIndex: 'remark', key: 'remark', ellipsis: true },
+    {
+      title: '备注',
+      dataIndex: 'remark',
+      key: 'remark',
+      ellipsis: true,
+      render: (remark: string | null, record: HomeworkRecord) => (
+        <Input
+          size="small"
+          defaultValue={remark || ''}
+          disabled={isReadonly}
+          placeholder="填写备注"
+          onBlur={(event) => {
+            const nextRemark = event.target.value.trim();
+            if (nextRemark === (remark || '')) return;
+            updateMutation.mutate({
+              recordId: record.id,
+              status: record.status,
+              remark: nextRemark,
+            });
+          }}
+          onPressEnter={(event) => event.currentTarget.blur()}
+        />
+      ),
+    },
   ];
 
   return (

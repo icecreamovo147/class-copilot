@@ -24,7 +24,7 @@ import {
   SaveOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/app/store';
 import { backupService, configService, getCommandErrorMessage } from '@/services';
 import { invoke } from '@tauri-apps/api/core';
@@ -33,6 +33,7 @@ const { Title, Text, Paragraph } = Typography;
 
 export default function SettingsPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { currentCohort, cohorts } = useAppStore();
   const [form] = Form.useForm();
@@ -63,6 +64,24 @@ export default function SettingsPage() {
       export_preference: overview.export_preference,
     });
   }, [overview, form]);
+
+  useEffect(() => {
+    const exportParam = searchParams.get('export');
+    if (!exportParam || cohorts.length === 0) return;
+
+    const cohortId = Number(exportParam);
+    if (!Number.isFinite(cohortId)) return;
+
+    const targetCohort = cohorts.find((cohort) => cohort.id === cohortId);
+    if (!targetCohort) return;
+
+    setExportCohortId(targetCohort.id);
+    setExportModalVisible(true);
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('export');
+    setSearchParams(nextParams, { replace: true });
+  }, [cohorts, searchParams, setSearchParams]);
 
   const backupDefaultPath = useMemo(() => {
     if (!overview?.default_backup_dir) {

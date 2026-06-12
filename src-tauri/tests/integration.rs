@@ -1737,7 +1737,47 @@ async fn test_backup_checksum_verification_and_integrity() {
 #[tokio::test]
 async fn test_export_cohort_contains_summary_workbook() {
     let pool = create_test_file_db("export_cohort").await;
-    let (cohort_id, _) = seed_test_data(&pool).await;
+    let (cohort_id, student_id) = seed_test_data(&pool).await;
+    let now = now_str();
+    let subject_id: (i64,) = sqlx::query_as(
+        "INSERT INTO subject (name, sort_order, is_active, created_at, updated_at)
+         VALUES ('数学', 1, 1, ?1, ?1) RETURNING id",
+    )
+    .bind(&now)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let exam_id: (i64,) = sqlx::query_as(
+        "INSERT INTO exam (cohort_id, name, exam_date, created_at, updated_at)
+         VALUES (?1, '期中考试', ?2, ?3, ?3) RETURNING id",
+    )
+    .bind(cohort_id)
+    .bind(today_str())
+    .bind(&now)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO exam_subject_config (exam_id, subject_id, full_score, pass_score, excellent_score, sort_order, created_at, updated_at)
+         VALUES (?1, ?2, 100, 60, 90, 1, ?3, ?3)",
+    )
+    .bind(exam_id.0)
+    .bind(subject_id.0)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO class_fee (cohort_id, fee_date, fee_type, category, title, amount, student_id, payment_status, created_at, updated_at)
+         VALUES (?1, ?2, '收入', '班费', '班费缴纳', 200, ?3, '已缴费', ?4, ?4)",
+    )
+    .bind(cohort_id)
+    .bind(today_str())
+    .bind(student_id)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .unwrap();
     let state = make_app_state(pool.clone());
     let export_path =
         std::env::temp_dir().join(format!("test_cohort_export_{}.zip", unique_suffix()));
@@ -1754,6 +1794,11 @@ async fn test_export_cohort_contains_summary_workbook() {
     assert!(archive.by_name("students.json").is_ok(), "应包含学生 JSON");
     assert!(archive.by_name("homeworks.json").is_ok(), "应包含作业 JSON");
     assert!(
+        archive.by_name("exam_subject_configs.json").is_ok(),
+        "应包含考试科目配置 JSON"
+    );
+    assert!(archive.by_name("class_fee.json").is_ok(), "应包含班费 JSON");
+    assert!(
         archive.by_name("export_summary.xlsx").is_ok(),
         "应包含 Excel 摘要"
     );
@@ -1764,6 +1809,8 @@ async fn test_export_cohort_contains_summary_workbook() {
     let meta: serde_json::Value = serde_json::from_str(&meta_text).unwrap();
     assert_eq!(meta["summary"]["student_count"], 1);
     assert_eq!(meta["summary"]["homework_count"], 1);
+    assert_eq!(meta["summary"]["exam_subject_config_count"], 1);
+    assert_eq!(meta["summary"]["class_fee_count"], 1);
 
     let _ = std::fs::remove_file(&export_path);
 }

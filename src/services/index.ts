@@ -371,9 +371,3 @@ export const configService = {
   downloadTemplate: (type: string, filePath: string) =>
     cmd<void>('download_template', { template_type: type, file_path: filePath }),
 };
-
-// ==================== Export Service ====================
-export const exportService = {
-  exportHomework: (homeworkId: number, filePath: string) =>
-    cmd<void>('export_homework', { homework_id: homeworkId, file_path: filePath }),
-};

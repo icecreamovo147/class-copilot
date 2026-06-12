@@ -6,7 +6,7 @@ import { PlusOutlined, EditOutlined, SwapOutlined, LockOutlined, UnlockOutlined,
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/app/store';
-import { cohortService, getCommandErrorMessage } from '@/services';
+import { cohortService, configService, getCommandErrorMessage } from '@/services';
 import type { Cohort, CohortStatus } from '@/types';
 
 const { Title } = Typography;
@@ -14,7 +14,7 @@ const { Title } = Typography;
 export default function CohortList() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { isReadonly, setCurrentCohort } = useAppStore();
+  const { setCurrentCohort } = useAppStore();
   const [modalVisible, setModalVisible] = useState(false);
   const [editingCohort, setEditingCohort] = useState<Cohort | null>(null);
   const [form] = Form.useForm();
@@ -22,6 +22,11 @@ export default function CohortList() {
   const { data: cohorts, isLoading } = useQuery({
     queryKey: ['cohorts'],
     queryFn: () => cohortService.list(),
+  });
+
+  const { data: settingsOverview } = useQuery({
+    queryKey: ['settingsOverview'],
+    queryFn: () => configService.getOverview(),
   });
 
   // 筛选状态
@@ -93,6 +98,11 @@ export default function CohortList() {
   const handleCreate = () => {
     setEditingCohort(null);
     form.resetFields();
+    form.setFieldsValue({
+      school_name: settingsOverview?.school_name || undefined,
+      head_teacher: settingsOverview?.head_teacher || undefined,
+      semester: settingsOverview?.default_semester || undefined,
+    });
     setModalVisible(true);
   };
 
@@ -152,7 +162,7 @@ export default function CohortList() {
       key: 'action',
       render: (_: unknown, record: Cohort) => (
         <Space>
-          {!record.is_current && !isReadonly && (
+          {!record.is_current && record.status === '使用中' && (
             <Tooltip title="切换为此届次">
               <Button type="link" icon={<SwapOutlined />} onClick={() => handleSwitch(record)}>
                 切换
@@ -160,7 +170,7 @@ export default function CohortList() {
             </Tooltip>
           )}
           <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
-            {isReadonly ? '查看' : '编辑'}
+            {record.status === '已归档' ? '查看' : '编辑'}
           </Button>
           {record.status === '使用中' && (
             <Popconfirm title="归档后数据将变为只读，确定归档？" onConfirm={() => archiveMutation.mutate(record.id)}>
@@ -269,10 +279,7 @@ export default function CohortList() {
               <InputNumber min={2000} max={2099} />
             </Form.Item>
             <Form.Item name="semester" label="当前学期">
-              <Select style={{ width: 120 }}>
-                <Select.Option value="第一学期">第一学期</Select.Option>
-                <Select.Option value="第二学期">第二学期</Select.Option>
-              </Select>
+              <Input placeholder="如：2026 春季学期" style={{ width: 200 }} />
             </Form.Item>
           </Space>
           <Form.Item name="remark" label="备注">

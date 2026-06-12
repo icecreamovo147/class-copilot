@@ -40,6 +40,21 @@ const STATUS_LABEL_MAP: Record<string, string> = {
   '旷课': '旷课',
 };
 
+type RegisterRecord = {
+  key: number;
+  student_id: number;
+  student_name: string;
+  student_no: string;
+  group_name: string | null | undefined;
+  status: AttendanceStatus;
+  leave_type: string | null;
+  leave_start_date: string | null;
+  leave_end_date: string | null;
+  reason: string | null;
+  remark: string | null;
+  attendance_id: number | null;
+};
+
 // Tag 颜色映射 — 直接匹配 Ant Design Tag color 属性
 const attendanceStatusConfig: Record<string, { label: string; color: string }> = {
   '正常': { label: '正常', color: 'success' },
@@ -207,9 +222,6 @@ export default function AttendancePage() {
   const toolbarBg = isDark ? '#141414' : '#fff';
   const toolbarBorder = isDark ? '#303030' : '#f0f0f0';
   const textHeading = isDark ? '#e8e8e8' : '#262626';
-  const textDisabled = isDark ? '#8c8c8c' : '#595959';
-  const textPlaceholder = isDark ? '#595959' : '#bfbfbf';
-  const textLabel = isDark ? '#8c8c8c' : '#8c8c8c';
 
   // 暗色模式下状态卡片背景映射
   const getStatusBg = (lightBg: string) => {
@@ -329,7 +341,7 @@ export default function AttendancePage() {
   });
 
   // ==================== 当日登记逻辑 ====================
-  const allRecords = (students || []).map((s) => {
+  const allRecords: RegisterRecord[] = (students || []).map((s) => {
     const a = (attendanceData || []).find((r) => r.student_id === s.id);
     return {
       key: s.id,
@@ -421,7 +433,7 @@ export default function AttendancePage() {
   };
 
   // 使用 ref 保存 allRecords，避免 handleFieldUpdate 因 allRecords 变化而频繁重建
-  const allRecordsRef = useRef(allRecords);
+  const allRecordsRef = useRef<RegisterRecord[]>(allRecords);
   allRecordsRef.current = allRecords;
 
   /**
@@ -575,17 +587,23 @@ export default function AttendancePage() {
 
       {/* ── 2) Today Overview ── */}
       <div style={{ display: 'flex', gap: 10 }}>
-        {(['正常', '迟到', '早退', '请假', '旷课'] as const).map((key) => (
-          <StatCard
-            key={key}
-            label={STATUS_LABEL_MAP[key]}
-            count={stats[key === '正常' ? 'normal' : key === '迟到' ? 'late' : key === '早退' ? 'early' : key === '请假' ? 'leave' : 'absent']}
-            color={STATUS_CONFIG[key].color}
-            bg={getStatusBg(STATUS_CONFIG[key].bg)}
-            icon={STATUS_CONFIG[key].icon}
-            isDark={isDark}
-          />
-        ))}
+        {(['正常', '迟到', '早退', '请假', '旷课'] as const).map((key) => {
+          const cfg = STATUS_CONFIG[key] ?? { color: '#52c41a', bg: '#f6ffed', icon: <SmileOutlined /> };
+          const label = STATUS_LABEL_MAP[key] ?? key;
+          const countKey: keyof typeof stats =
+            key === '正常' ? 'normal' : key === '迟到' ? 'late' : key === '早退' ? 'early' : key === '请假' ? 'leave' : 'absent';
+          return (
+            <StatCard
+              key={key}
+              label={label}
+              count={stats[countKey]}
+              color={cfg.color}
+              bg={getStatusBg(cfg.bg)}
+              icon={cfg.icon}
+              isDark={isDark}
+            />
+          );
+        })}
       </div>
 
       {/* ── 3) Student Table ── */}
@@ -604,10 +622,10 @@ export default function AttendancePage() {
               dataIndex: 'status',
               key: 'status',
               width: 110,
-              render: (status: AttendanceStatus, record: { student_id: number }) => {
-                const cfg = attendanceStatusConfig[status];
+                  render: (status: AttendanceStatus, record: RegisterRecord) => {
+                const cfg = attendanceStatusConfig[status] ?? { label: status, color: 'default' };
                 const menuItems = ATTENDANCE_STATUSES.map((s) => {
-                  const itemCfg = attendanceStatusConfig[s];
+                  const itemCfg = attendanceStatusConfig[s] ?? { label: s, color: 'default' };
                   return {
                     key: s,
                     label: <Tag color={itemCfg.color} style={{ margin: 0 }}>{itemCfg.label}</Tag>,
@@ -641,7 +659,7 @@ export default function AttendancePage() {
               dataIndex: 'reason',
               key: 'reason',
               ellipsis: true,
-              render: (v: string | null, record: { student_id: number }) => (
+              render: (v: string | null, record: RegisterRecord) => (
                 <EditableTextCell
                   value={v}
                   placeholder="输入原因"
@@ -656,7 +674,7 @@ export default function AttendancePage() {
               dataIndex: 'leave_type',
               key: 'leave_type',
               width: 100,
-              render: (v: string | null, record: { student_id: number; status: string }) => (
+              render: (v: string | null, record: RegisterRecord) => (
                 <EditableLeaveTypeCell
                   value={v}
                   disabled={isReadonly || record.status !== '请假'}
@@ -669,7 +687,7 @@ export default function AttendancePage() {
               dataIndex: 'remark',
               key: 'remark',
               ellipsis: true,
-              render: (v: string | null, record: { student_id: number }) => (
+              render: (v: string | null, record: RegisterRecord) => (
                 <EditableTextCell
                   value={v}
                   placeholder="输入备注"

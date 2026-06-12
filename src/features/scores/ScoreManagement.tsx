@@ -1,12 +1,12 @@
 import { useEffect, useState, useMemo } from 'react';
 import {
   Alert, Card, Table, Button, Modal, Form, Input, Select, DatePicker, message,
-  Space, Tag, Typography, Row, Col, Descriptions, Empty, Popconfirm,
-  Dropdown, Divider, Badge, Tooltip, Skeleton,
+  Space, Tag, Typography, Row, Col, Popconfirm,
+  Dropdown, Divider, Badge, Skeleton,
 } from 'antd';
 import {
   PlusOutlined, UploadOutlined, EditOutlined, DeleteOutlined,
-  DownloadOutlined, SettingOutlined, TrophyOutlined, RightOutlined,
+  DownloadOutlined, SettingOutlined, TrophyOutlined,
   BarChartOutlined, FileTextOutlined, ExperimentOutlined,
   CheckCircleOutlined, ExclamationCircleOutlined,
   BookOutlined, ArrowLeftOutlined,
@@ -123,7 +123,6 @@ export default function ScoreManagement() {
   const itemSelectedBg = isDark ? '#111d2c' : '#e6f4ff';
   const textLabel = isDark ? '#8c8c8c' : '#666';
   const textMuted = isDark ? '#6b6b6b' : '#999';
-  const textHeading = isDark ? '#e8e8e8' : '#1a1a2e';
   const iconMuted = isDark ? '#434343' : '#d9d9d9';
 
   // ── core selection state ──

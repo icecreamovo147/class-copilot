@@ -241,7 +241,7 @@ async fn validate_sqlite_backup_file(
     }
     log::info!("PRAGMA integrity_check: ok");
 
-    // 检查必需的11张业务表是否都存在
+    // 检查必需的业务表是否都存在
     let required_tables = [
         "cohort",
         "student",
@@ -250,10 +250,12 @@ async fn validate_sqlite_backup_file(
         "homework_record",
         "attendance",
         "exam",
+        "exam_subject_config",
         "score",
         "notice",
         "duty",
         "behavior_record",
+        "class_fee",
         "system_config",
     ];
 
@@ -319,6 +321,8 @@ fn get_delete_order() -> &'static [&'static str] {
         "homework_record",
         "score",
         "attendance",
+        "class_fee",
+        "exam_subject_config",
         "homework",
         "exam",
         "notice",
@@ -341,11 +345,13 @@ fn get_insert_order() -> &'static [&'static str] {
         "homework",
         "homework_record",
         "exam",
+        "exam_subject_config",
         "score",
         "attendance",
         "notice",
         "duty",
         "behavior_record",
+        "class_fee",
     ]
 }
 
@@ -747,6 +753,7 @@ pub async fn export_cohort(
     .await
     .map_err(|e| e.to_string())?;
     let exam_count = exams.len() as i64;
+    let mut exam_subject_config_count = 0_i64;
     let mut score_count = 0_i64;
     if !exams.is_empty() {
         zip.start_file("exams.json", options)
@@ -771,6 +778,25 @@ pub async fn export_cohort(
                 .map_err(|e| e.to_string())?;
             zip.write_all(
                 serde_json::to_string_pretty(&scores)
+                    .map_err(|e| e.to_string())?
+                    .as_bytes(),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        let subject_configs = sqlx::query_as::<_, super::exam::ExamSubjectConfig>(
+            "SELECT * FROM exam_subject_config WHERE exam_id IN (SELECT id FROM exam WHERE cohort_id = ?1)",
+        )
+        .bind(cohort_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        exam_subject_config_count = subject_configs.len() as i64;
+        if !subject_configs.is_empty() {
+            zip.start_file("exam_subject_configs.json", options)
+                .map_err(|e| e.to_string())?;
+            zip.write_all(
+                serde_json::to_string_pretty(&subject_configs)
                     .map_err(|e| e.to_string())?
                     .as_bytes(),
             )
@@ -853,6 +879,26 @@ pub async fn export_cohort(
             serde_json::to_string_pretty(&behaviors_json)
                 .map_err(|e| e.to_string())?
                 .as_bytes(),
+            )
+            .map_err(|e| e.to_string())?;
+    }
+
+    // 导出班费
+    let class_fee_records = sqlx::query_as::<_, super::affair::ClassFeeRecord>(
+        "SELECT * FROM class_fee WHERE cohort_id = ?1 AND deleted_at IS NULL ORDER BY fee_date DESC, id DESC",
+    )
+    .bind(cohort_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let class_fee_count = class_fee_records.len() as i64;
+    if !class_fee_records.is_empty() {
+        zip.start_file("class_fee.json", options)
+            .map_err(|e| e.to_string())?;
+        zip.write_all(
+            serde_json::to_string_pretty(&class_fee_records)
+                .map_err(|e| e.to_string())?
+                .as_bytes(),
         )
         .map_err(|e| e.to_string())?;
     }
@@ -870,10 +916,12 @@ pub async fn export_cohort(
         "homework_record_count": homework_record_count,
         "attendance_count": attendance_count,
         "exam_count": exam_count,
+        "exam_subject_config_count": exam_subject_config_count,
         "score_count": score_count,
         "notice_count": notice_count,
         "duty_count": duty_count,
         "behavior_count": behavior_count,
+        "class_fee_count": class_fee_count,
         "attachment_count": attachment_count
     });
     let meta = serde_json::json!({
@@ -918,10 +966,12 @@ pub async fn export_cohort(
         ("作业记录数量", homework_record_count),
         ("考勤记录数量", attendance_count),
         ("考试数量", exam_count),
+        ("考试科目配置数量", exam_subject_config_count),
         ("成绩记录数量", score_count),
         ("通知数量", notice_count),
         ("值日数量", duty_count),
         ("奖惩数量", behavior_count),
+        ("班费记录数量", class_fee_count),
         ("附件数量", attachment_count),
     ]
     .iter()
