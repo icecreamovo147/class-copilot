@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { Spin } from 'antd';
 import AppLayout from '@/layouts/AppLayout';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 const Dashboard = lazy(() => import('@/features/dashboard/Dashboard'));
 const CohortList = lazy(() => import('@/features/cohorts/CohortList'));
@@ -33,7 +34,7 @@ function LazyLoad({ children }: { children: React.ReactNode }) {
 export const router = createBrowserRouter([
   {
     path: '/',
-    element: <AppLayout />,
+    element: <ErrorBoundary><AppLayout /></ErrorBoundary>,
     children: [
       { index: true, element: <Navigate to="/dashboard" replace /> },
       {

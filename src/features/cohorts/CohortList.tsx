@@ -114,13 +114,14 @@ export default function CohortList() {
   const handleSwitch = (cohort: Cohort) => {
     Modal.confirm({
       title: '切换届次',
-      content: `确定切换到 ${cohort.cohort_name} ${cohort.class_name} 吗？切换后页面将刷新。`,
+      content: `确定切换到 ${cohort.cohort_name} ${cohort.class_name} 吗？`,
       onOk: async () => {
         try {
           await cohortService.setCurrent(cohort.id);
           setCurrentCohort(cohort);
           message.success(`已切换到 ${cohort.cohort_name} ${cohort.class_name}`);
-          window.location.reload();
+          // 清除所有依赖于届次的查询缓存，触发页面自然重渲染
+          queryClient.invalidateQueries();
         } catch (err: unknown) {
           message.error(getCommandErrorMessage(err));
         }
@@ -151,7 +152,7 @@ export default function CohortList() {
       key: 'action',
       render: (_: unknown, record: Cohort) => (
         <Space>
-          {!record.is_current && (
+          {!record.is_current && !isReadonly && (
             <Tooltip title="切换为此届次">
               <Button type="link" icon={<SwapOutlined />} onClick={() => handleSwitch(record)}>
                 切换

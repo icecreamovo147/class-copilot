@@ -82,6 +82,7 @@ export interface Homework {
   total_count?: number;
   completion_rate?: number;
   incomplete_count?: number;
+  assigned_student_ids?: number[];
 }
 
 export type HomeworkStatus = '未登记' | '已完成' | '未完成' | '迟交' | '补交' | '质量较差';

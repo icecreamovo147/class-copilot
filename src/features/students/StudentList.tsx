@@ -31,7 +31,7 @@ export default function StudentList() {
   const [form] = Form.useForm();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['students', currentCohort?.id, page, pageSize, searchText, genderFilter, groupFilter, statusFilter],
+    queryKey: ['students', currentCohort?.id, page, pageSize, searchText, genderFilter, groupFilter, statusFilter, focusFilter],
     queryFn: () =>
       studentService.list(currentCohort!.id, {
         page,
@@ -304,6 +304,7 @@ export default function StudentList() {
               { value: '正常', label: '正常' },
               { value: '休学', label: '休学' },
               { value: '退学', label: '退学' },
+              { value: '转学', label: '转学' },
             ]}
           />
           <Select
@@ -373,8 +374,8 @@ export default function StudentList() {
           </Row>
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item name="phone" label="联系电话">
-                <Input />
+              <Form.Item name="phone" label="联系电话" rules={[{ pattern: /^[\d\-() ]{0,20}$/, message: '请输入有效的电话号码' }]}>
+                <Input placeholder="如：13800138000" />
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -385,8 +386,8 @@ export default function StudentList() {
           </Row>
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item name="parent_phone" label="家长电话">
-                <Input />
+              <Form.Item name="parent_phone" label="家长电话" rules={[{ pattern: /^[\d\-() ]{0,20}$/, message: '请输入有效的电话号码' }]}>
+                <Input placeholder="如：13800138000" />
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -406,6 +407,7 @@ export default function StudentList() {
                     { value: '正常', label: '正常' },
                     { value: '休学', label: '休学' },
                     { value: '退学', label: '退学' },
+                    { value: '转学', label: '转学' },
                   ]}
                 />
               </Form.Item>

@@ -4,10 +4,10 @@ import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined, LinkOutlined, 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/app/store';
-import { homeworkService } from '@/services';
+import { homeworkService, studentService } from '@/services';
 import { useLocalStorageState } from '@/hooks/useLocalStorageState';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
-import type { Homework } from '@/types';
+import type { Homework, Student } from '@/types';
 import dayjs from 'dayjs';
 
 const { Title } = Typography;
@@ -26,8 +26,14 @@ export default function HomeworkList() {
   const [pageSize, setPageSize] = useLocalStorageState('homework_list_page_size', 10);
   const [form] = Form.useForm();
 
+  const { data: allStudents } = useQuery({
+    queryKey: ['allStudents', currentCohort?.id],
+    queryFn: () => studentService.getAll(currentCohort!.id),
+    enabled: !!currentCohort,
+  });
+
   const { data, isLoading } = useQuery({
-    queryKey: ['homeworks', currentCohort?.id, page, pageSize, searchText],
+    queryKey: ['homeworks', currentCohort?.id, page, pageSize, searchText, publishDateFilter, incompleteOnly],
     queryFn: () =>
       homeworkService.list(currentCohort!.id, {
         page,
@@ -88,6 +94,7 @@ export default function HomeworkList() {
     if (isReadonly) return;
     setEditingHomework(null);
     form.resetFields();
+    form.setFieldValue('assigned_student_ids', (allStudents || []).filter((student) => student.status === '正常').map((student) => student.id));
     setModalVisible(true);
   };
 
@@ -128,6 +135,8 @@ export default function HomeworkList() {
       message.error('选择附件失败');
     }
   };
+
+  const assignableStudents = (allStudents || []).filter((student) => student.status === '正常');
 
   const columns = [
     { title: '标题', dataIndex: 'title', key: 'title', width: 180 },
@@ -267,14 +276,9 @@ export default function HomeworkList() {
             <Input />
           </Form.Item>
           <Row gutter={16}>
-            <Col span={12}>
+            <Col span={24}>
               <Form.Item name="subject_name" label="科目">
                 <Input placeholder="如：数学" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="subject_id" label="科目ID（可选）">
-                <Input type="number" />
               </Form.Item>
             </Col>
           </Row>
@@ -290,6 +294,28 @@ export default function HomeworkList() {
               </Form.Item>
             </Col>
           </Row>
+          {!editingHomework && (
+            <Form.Item
+              name="assigned_student_ids"
+              label="分配学生"
+              rules={[{ required: true, message: '请至少选择一名学生' }]}
+              extra="默认已选当前届次全部正常学生，你可以手动删减。"
+            >
+              <Select
+                mode="multiple"
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                maxTagCount={3}
+                maxTagPlaceholder={(omittedValues) => `等 ${omittedValues.length} 人`}
+                placeholder="选择要布置这份作业的学生"
+                options={assignableStudents.map((student: Student) => ({
+                  value: student.id,
+                  label: `${student.student_no} ${student.name}${student.group_name ? ` · ${student.group_name}` : ''}`,
+                }))}
+              />
+            </Form.Item>
+          )}
           <Form.Item name="description" label="作业描述">
             <Input.TextArea rows={3} />
           </Form.Item>

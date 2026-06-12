@@ -14,7 +14,7 @@ import {
   MenuUnfoldOutlined,
   ApartmentOutlined,
 } from '@ant-design/icons';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAppStore } from '@/app/store';
 import { cohortService } from '@/services';
 
@@ -37,6 +37,7 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { currentCohort, setCurrentCohort, cohorts, setCohorts, sidebarCollapsed, toggleSidebar, isReadonly } = useAppStore();
+  const queryClient = useQueryClient();
   const [initializing, setInitializing] = useState(true);
 
   const { data: cohortsData } = useQuery({
@@ -59,16 +60,11 @@ export default function AppLayout() {
     if (currentData) {
       setCurrentCohort(currentData);
       setInitializing(false);
-    } else if (cohortsData && cohortsData.length === 0) {
+    } else if (cohortsData !== undefined) {
+      // currentData 确定为空且 cohortsData 已加载完毕
       setInitializing(false);
     }
   }, [currentData, cohortsData, setCurrentCohort]);
-
-  useEffect(() => {
-    if (!currentData && cohortsData) {
-      setInitializing(false);
-    }
-  }, [currentData, cohortsData]);
 
   const handleCohortChange = async (cohortId: number) => {
     try {
@@ -78,8 +74,8 @@ export default function AppLayout() {
         setCurrentCohort(cohort);
       }
       message.success(`已切换到届次`);
-      // 刷新所有缓存
-      window.location.reload();
+      // 清除所有依赖于届次的查询缓存，触发页面自然重渲染
+      queryClient.invalidateQueries();
     } catch {
       message.error('切换届次失败');
     }

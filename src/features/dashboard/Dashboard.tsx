@@ -1,4 +1,4 @@
-import { Line } from '@ant-design/charts';
+import { lazy, Suspense } from 'react';
 import { Card, Row, Col, Statistic, Button, Table, Tag, List, Typography, Empty, Spin, Alert, Space } from 'antd';
 import {
   UserOutlined,
@@ -14,6 +14,9 @@ import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/app/store';
 import { statisticsService } from '@/services';
 import dayjs from 'dayjs';
+
+const LazyLine = lazy(() => import('@ant-design/charts').then((m) => ({ default: m.Line })));
+const ChartFallback = () => <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spin /></div>;
 
 const { Title, Text } = Typography;
 
@@ -110,11 +113,17 @@ export default function Dashboard() {
           <Card hoverable onClick={goToHomeworkToday}>
             <Statistic
               title="今日作业完成率"
-              value={stats.today_homework_rate * 100}
+              value={stats.today_homework_count > 0 ? Number((stats.today_homework_rate * 100).toFixed(1)) : 0}
               suffix="%"
               precision={1}
               prefix={<BookOutlined />}
-              valueStyle={{ color: stats.today_homework_rate >= 0.8 ? '#3f8600' : '#cf1322' }}
+              valueStyle={{
+                color: stats.today_homework_count === 0
+                  ? undefined
+                  : stats.today_homework_rate >= 0.8
+                    ? '#3f8600'
+                    : '#cf1322',
+              }}
             />
             <Text type="secondary">共{stats.today_homework_count}项 / {stats.today_homework_completed}/{stats.today_homework_total_records} 已完成</Text>
           </Card>
@@ -155,7 +164,7 @@ export default function Dashboard() {
                   { key: '1', label: '已布置作业', value: `${stats.today_homework_count} 项` },
                   { key: '2', label: '已完成', value: `${stats.today_homework_completed} 人次` },
                   { key: '3', label: '未完成', value: `${stats.today_homework_total_records - stats.today_homework_completed} 人次` },
-                  { key: '4', label: '完成率', value: `${(stats.today_homework_rate * 100).toFixed(1)}%` },
+                  { key: '4', label: '完成率', value: `${Number((stats.today_homework_rate * 100).toFixed(1))}%` },
                 ]}
                 columns={[
                   { title: '指标', dataIndex: 'label', key: 'label' },
@@ -198,15 +207,17 @@ export default function Dashboard() {
         <Col xs={24} lg={8}>
           <Card title="作业趋势" size="small">
             {homeworkTrend.length > 0 ? (
-              <Line
-                data={homeworkTrend.map((item) => ({
-                  date: item.publish_date,
-                  value: Number((item.completion_rate * 100).toFixed(1)),
-                }))}
-                xField="date"
-                yField="value"
-                point={{ size: 3 }}
-              />
+              <Suspense fallback={<ChartFallback />}>
+                <LazyLine
+                  data={homeworkTrend.map((item) => ({
+                    date: item.publish_date,
+                    value: Number((item.completion_rate * 100).toFixed(1)),
+                  }))}
+                  xField="date"
+                  yField="value"
+                  point={{ size: 3 }}
+                />
+              </Suspense>
             ) : (
               <Empty description="暂无作业趋势" />
             )}
@@ -215,15 +226,17 @@ export default function Dashboard() {
         <Col xs={24} lg={8}>
           <Card title="考勤趋势" size="small">
             {attendanceTrend.length > 0 ? (
-              <Line
-                data={attendanceTrend.map((item) => ({
-                  date: item.attendance_date,
-                  value: Number((item.normal_rate * 100).toFixed(1)),
-                }))}
-                xField="date"
-                yField="value"
-                point={{ size: 3 }}
-              />
+              <Suspense fallback={<ChartFallback />}>
+                <LazyLine
+                  data={attendanceTrend.map((item) => ({
+                    date: item.attendance_date,
+                    value: Number((item.normal_rate * 100).toFixed(1)),
+                  }))}
+                  xField="date"
+                  yField="value"
+                  point={{ size: 3 }}
+                />
+              </Suspense>
             ) : (
               <Empty description="暂无考勤趋势" />
             )}
@@ -232,15 +245,17 @@ export default function Dashboard() {
         <Col xs={24} lg={8}>
           <Card title="成绩趋势" size="small">
             {scoreTrend.length > 0 ? (
-              <Line
-                data={scoreTrend.map((item) => ({
-                  exam: item.exam_name,
-                  value: Number(item.avg_score.toFixed(1)),
-                }))}
-                xField="exam"
-                yField="value"
-                point={{ size: 3 }}
-              />
+              <Suspense fallback={<ChartFallback />}>
+                <LazyLine
+                  data={scoreTrend.map((item) => ({
+                    exam: item.exam_name,
+                    value: Number(item.avg_score.toFixed(1)),
+                  }))}
+                  xField="exam"
+                  yField="value"
+                  point={{ size: 3 }}
+                />
+              </Suspense>
             ) : (
               <Empty description="暂无成绩趋势" />
             )}

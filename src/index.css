@@ -67,6 +67,31 @@ body {
   color: #999;
 }
 
+/* ── 考勤异常行 ── */
+.attendance-row-abnormal td {
+  background: rgba(250, 173, 20, 0.04) !important;
+}
+
+/* ── 考勤状态 Tag（Dropdown 触发）── */
+.attendance-status-tag {
+  cursor: pointer;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+  transition: opacity 0.2s;
+}
+
+.attendance-status-tag:hover {
+  opacity: 0.85;
+}
+
+.attendance-status-tag-icon {
+  font-size: 10px;
+  opacity: 0.55;
+}
+
 /* ── 页面切换过渡动画 ── */
 .page-transition {
   animation: pageFadeIn 0.35s ease-out;

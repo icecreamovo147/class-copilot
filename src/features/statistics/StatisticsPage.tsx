@@ -1,5 +1,4 @@
-import { useMemo, useState } from 'react';
-import { Line } from '@ant-design/charts';
+import { useMemo, useState, lazy, Suspense } from 'react';
 import { Alert, Button, Card, DatePicker, Empty, Select, Space, Spin, Statistic, Table, Tabs, Tag, Typography, message } from 'antd';
 import { DownloadOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
@@ -7,6 +6,9 @@ import { useAppStore } from '@/app/store';
 import { cohortService, statisticsService } from '@/services';
 import dayjs from 'dayjs';
 import type { Cohort } from '@/types';
+
+const LazyLine = lazy(() => import('@ant-design/charts').then((m) => ({ default: m.Line })));
+const ChartFallback = () => <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spin /></div>;
 
 const { Title, Paragraph } = Typography;
 const { RangePicker } = DatePicker;
@@ -36,16 +38,18 @@ function HomeworkStatsTab({ cohortId }: { cohortId: number }) {
       </Space>
       {trendData && trendData.length > 0 ? (
         <Card size="small" title="作业完成率趋势">
-          <Line
-            data={trendData.map((item) => ({
-              date: item.publish_date,
-              value: Number((item.completion_rate * 100).toFixed(1)),
-            }))}
-            xField="date"
-            yField="value"
-            point={{ size: 4 }}
-            axis={{ y: { title: '完成率(%)' } }}
-          />
+          <Suspense fallback={<ChartFallback />}>
+            <LazyLine
+              data={trendData.map((item) => ({
+                date: item.publish_date,
+                value: Number((item.completion_rate * 100).toFixed(1)),
+              }))}
+              xField="date"
+              yField="value"
+              point={{ size: 4 }}
+              axis={{ y: { title: '完成率(%)' } }}
+            />
+          </Suspense>
         </Card>
       ) : (
         <Empty description="暂无作业趋势数据" />
@@ -105,7 +109,9 @@ function AttendanceStatsTab({ cohortId }: { cohortId: number }) {
       />
       {trendLoading ? <Spin /> : chartData.length > 0 ? (
         <Card size="small" title="考勤趋势">
-          <Line data={chartData} xField="date" yField="value" colorField="type" point={{ size: 3 }} />
+          <Suspense fallback={<ChartFallback />}>
+            <LazyLine data={chartData} xField="date" yField="value" colorField="type" point={{ size: 3 }} />
+          </Suspense>
         </Card>
       ) : (
         <Empty description="暂无考勤趋势数据" />
@@ -161,17 +167,19 @@ function ScoreStatsTab({ cohortId }: { cohortId: number }) {
       </Space>
       {trendData && trendData.length > 0 ? (
         <Card size="small" title="成绩趋势">
-          <Line
-            data={trendData.map((item) => ({
-              exam: item.exam_name,
-              score: Number(item.avg_score.toFixed(1)),
-              subject: item.subject_name,
-            }))}
-            xField="exam"
-            yField="score"
-            colorField="subject"
-            point={{ size: 3 }}
-          />
+          <Suspense fallback={<ChartFallback />}>
+            <LazyLine
+              data={trendData.map((item) => ({
+                exam: item.exam_name,
+                score: Number(item.avg_score.toFixed(1)),
+                subject: item.subject_name,
+              }))}
+              xField="exam"
+              yField="score"
+              colorField="subject"
+              point={{ size: 3 }}
+            />
+          </Suspense>
         </Card>
       ) : (
         <Empty description="暂无成绩趋势数据" />
@@ -235,12 +243,19 @@ function CrossCohortTab() {
   return (
     <Space direction="vertical" style={{ width: '100%' }} size={16}>
       <Space wrap>
-        <Select
-          mode="multiple"
-          style={{ width: 420 }}
-          placeholder="选择两个或多个届次"
-          value={selectedIds}
-          onChange={setSelectedIds}
+          <Select
+            mode="multiple"
+            style={{ width: 420 }}
+            placeholder="选择两个或多个届次（建议不超过 5 个）"
+            maxTagCount={5}
+            value={selectedIds}
+            onChange={(ids) => {
+              if (ids.length <= 10) {
+                setSelectedIds(ids);
+              } else {
+                message.warning('最多同时对比 10 个届次');
+              }
+            }}
           options={cohorts.map((c: Cohort) => ({
             value: c.id,
             label: `${c.cohort_name} ${c.class_name} ${c.status === '已归档' ? '(已归档)' : ''}`,

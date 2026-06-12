@@ -126,7 +126,7 @@ export const homeworkService = {
 
   getById: (id: number) => cmd<Homework>('get_homework', { id }),
 
-  create: (data: Partial<Homework>) => cmd<Homework>('create_homework', data),
+  create: (data: Partial<Homework> & { assigned_student_ids?: number[] }) => cmd<Homework>('create_homework', data),
 
   update: (id: number, data: Partial<Homework>) => cmd<Homework>('update_homework', { id, ...data }),
 

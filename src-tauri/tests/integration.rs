@@ -836,6 +836,34 @@ async fn test_get_homeworks_returns_zero_completion_rate_without_records() {
 }
 
 #[tokio::test]
+async fn test_create_homework_assigns_selected_students_only() {
+    let pool = create_test_db().await;
+    let now = now_str();
+
+    let cohort_id: (i64,) = sqlx::query_as(
+        "INSERT INTO cohort (cohort_name, class_name, status, is_current, created_at, updated_at)
+         VALUES ('作业分配', '1班', '使用中', 1, ?1, ?1) RETURNING id",
+    )
+    .bind(&now)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let student_a = insert_student(&pool, cohort_id.0, "张三", "HW001").await;
+    let student_b = insert_student(&pool, cohort_id.0, "李四", "HW002").await;
+    let student_c = insert_student(&pool, cohort_id.0, "王五", "HW003").await;
+
+    let assigned_students =
+        homework::resolve_assigned_students(&pool, cohort_id.0, Some(vec![student_a, student_c]))
+            .await
+            .unwrap();
+    let assigned: Vec<i64> = assigned_students.into_iter().map(|student| student.id).collect();
+
+    assert_eq!(assigned, vec![student_a, student_c]);
+    assert!(!assigned.contains(&student_b));
+}
+
+#[tokio::test]
 async fn test_e2e_score_import_rankings_and_trend() {
     let pool = create_test_db().await;
     let now = now_str();

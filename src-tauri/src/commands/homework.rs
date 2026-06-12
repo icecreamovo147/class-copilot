@@ -79,6 +79,50 @@ fn remove_attachment_if_exists(app: &AppHandle, relative_path: Option<&str>) {
     }
 }
 
+pub async fn resolve_assigned_students<'e, E>(
+    executor: E,
+    cohort_id: i64,
+    assigned_student_ids: Option<Vec<i64>>,
+) -> Result<Vec<Student>, String>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    if let Some(student_ids) = assigned_student_ids {
+        if student_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let placeholders = (0..student_ids.len())
+            .map(|idx| format!("?{}", idx + 2))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let query = format!(
+            "SELECT * FROM student WHERE cohort_id = ?1 AND deleted_at IS NULL AND status = '正常' AND id IN ({})",
+            placeholders
+        );
+        let mut stmt = sqlx::query_as::<_, Student>(&query).bind(cohort_id);
+        for student_id in &student_ids {
+            stmt = stmt.bind(student_id);
+        }
+        let students = stmt
+            .fetch_all(executor)
+            .await
+            .map_err(|e| format!("查询指定学生失败: {}", e))?;
+        if students.len() != student_ids.len() {
+            return Err("部分指定学生不存在、已删除、状态非正常，或不属于当前届次".to_string());
+        }
+        Ok(students)
+    } else {
+        sqlx::query_as::<_, Student>(
+            "SELECT * FROM student WHERE cohort_id = ?1 AND deleted_at IS NULL AND status = '正常'",
+        )
+        .bind(cohort_id)
+        .fetch_all(executor)
+        .await
+        .map_err(|e| format!("查询学生失败: {}", e))
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct HomeworkRecord {
     pub id: i64,
@@ -147,20 +191,28 @@ pub async fn get_homeworks(
     let (total,): (i64,) = count_stmt
         .fetch_one(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| "查询作业列表失败，请稍后重试".to_string())?;
 
-    // 数据
+    // 数据 — 使用 LEFT JOIN 替代嵌套子查询，单次 JOIN 获取所有统计
     let data_query = format!(
         "SELECT h.id, h.cohort_id, h.title, h.subject_id, h.subject_name, h.description,
                 h.attachment_name, h.attachment_path, h.publish_date, h.deadline, h.remark, h.created_at, h.updated_at, h.deleted_at,
-            (SELECT COUNT(*) FROM homework_record hr WHERE hr.homework_id = h.id AND hr.status = '已完成') as completed_count,
-            (SELECT COUNT(*) FROM homework_record hr WHERE hr.homework_id = h.id) as total_count,
-            CASE WHEN (SELECT COUNT(*) FROM homework_record hr WHERE hr.homework_id = h.id) > 0 
-                THEN CAST((SELECT COUNT(*) FROM homework_record hr WHERE hr.homework_id = h.id AND hr.status = '已完成') AS REAL) / 
-                     (SELECT COUNT(*) FROM homework_record hr WHERE hr.homework_id = h.id) 
+            COALESCE(stats.completed_count, 0) as completed_count,
+            COALESCE(stats.total_count, 0) as total_count,
+            CASE WHEN COALESCE(stats.total_count, 0) > 0
+                THEN CAST(COALESCE(stats.completed_count, 0) AS REAL) / CAST(stats.total_count AS REAL)
                 ELSE CAST(0 AS REAL) END as completion_rate,
-            (SELECT COUNT(*) FROM homework_record hr WHERE hr.homework_id = h.id AND hr.status IN ('未登记', '未完成')) as incomplete_count
-         FROM homework h WHERE {} ORDER BY h.created_at DESC LIMIT ?{} OFFSET ?{}",
+            COALESCE(stats.incomplete_count, 0) as incomplete_count
+         FROM homework h
+         LEFT JOIN (
+             SELECT hr.homework_id,
+                 COUNT(*) as total_count,
+                 COUNT(CASE WHEN hr.status = '已完成' THEN 1 END) as completed_count,
+                 COUNT(CASE WHEN hr.status IN ('未登记', '未完成') THEN 1 END) as incomplete_count
+             FROM homework_record hr
+             GROUP BY hr.homework_id
+         ) stats ON stats.homework_id = h.id
+         WHERE {} ORDER BY h.created_at DESC LIMIT ?{} OFFSET ?{}",
         where_clause, param_idx, param_idx + 1
     );
     let mut data_stmt = sqlx::query(&data_query);
@@ -168,7 +220,7 @@ pub async fn get_homeworks(
         data_stmt = data_stmt.bind(p);
     }
     data_stmt = data_stmt.bind(page_size).bind(offset);
-    let rows = data_stmt.fetch_all(pool).await.map_err(|e| e.to_string())?;
+    let rows = data_stmt.fetch_all(pool).await.map_err(|_| "查询作业列表失败，请稍后重试".to_string())?;
 
     let data: Vec<serde_json::Value> = rows
         .iter()
@@ -223,6 +275,7 @@ pub async fn create_homework(
     publish_date: Option<String>,
     deadline: Option<String>,
     remark: Option<String>,
+    assigned_student_ids: Option<Vec<i64>>,
 ) -> Result<Homework, String> {
     let pool = &state.db;
     check_cohort_readonly(pool, cohort_id).await?;
@@ -260,14 +313,8 @@ pub async fn create_homework(
     .await
     .map_err(|e| format!("创建作业失败: {}", e))?;
 
-    // 为当前届次所有有效学生创建作业记录
-    let students = sqlx::query_as::<_, Student>(
-        "SELECT * FROM student WHERE cohort_id = ?1 AND deleted_at IS NULL AND status = '正常'",
-    )
-    .bind(cohort_id)
-    .fetch_all(&mut *tx)
-    .await
-    .map_err(|e| format!("查询学生失败: {}", e))?;
+    // 默认分配给当前届次全部正常学生；若传入学生列表，则仅分配给指定学生。
+    let students = resolve_assigned_students(&mut *tx, cohort_id, assigned_student_ids).await?;
 
     for student in &students {
         sqlx::query(

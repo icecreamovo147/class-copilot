@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 interface ShortcutOptions {
   ctrlOrMeta?: boolean;
@@ -27,6 +27,9 @@ export function useKeyboardShortcut(
     preventDefault = true,
   } = options;
 
+  const handlerRef = useRef(handler);
+  handlerRef.current = handler;
+
   useEffect(() => {
     if (!enabled) return;
 
@@ -42,10 +45,10 @@ export function useKeyboardShortcut(
       if (preventDefault) {
         event.preventDefault();
       }
-      handler();
+      handlerRef.current();
     };
 
     window.addEventListener('keydown', listener);
     return () => window.removeEventListener('keydown', listener);
-  }, [alt, ctrlOrMeta, enabled, handler, key, preventDefault, shift]);
+  }, [alt, ctrlOrMeta, enabled, key, preventDefault, shift]);
 }

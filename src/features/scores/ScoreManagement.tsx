@@ -1,6 +1,16 @@
-import { useEffect, useState } from 'react';
-import { Alert, Card, Table, Button, Modal, Form, Input, Select, DatePicker, message, Space, Tag, Typography, Tabs, Row, Col, Descriptions, Empty, Popconfirm } from 'antd';
-import { PlusOutlined, UploadOutlined, EditOutlined, DeleteOutlined, DownloadOutlined, SettingOutlined } from '@ant-design/icons';
+import { useEffect, useState, useMemo } from 'react';
+import {
+  Alert, Card, Table, Button, Modal, Form, Input, Select, DatePicker, message,
+  Space, Tag, Typography, Row, Col, Descriptions, Empty, Popconfirm,
+  Dropdown, Divider, Badge, Tooltip, Skeleton,
+} from 'antd';
+import {
+  PlusOutlined, UploadOutlined, EditOutlined, DeleteOutlined,
+  DownloadOutlined, SettingOutlined, TrophyOutlined, RightOutlined,
+  BarChartOutlined, FileTextOutlined, ExperimentOutlined,
+  CheckCircleOutlined, ExclamationCircleOutlined,
+  BookOutlined, ArrowLeftOutlined,
+} from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAppStore } from '@/app/store';
 import { configService, examService, scoreService, studentService, subjectService } from '@/services';
@@ -8,52 +18,137 @@ import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import type { Exam, ExamSubjectConfig, Subject } from '@/types';
 import dayjs from 'dayjs';
 
-const { Title } = Typography;
+const { Title, Text, Paragraph } = Typography;
 
+// ─── sidebar exam list item ────────────────────────────
+interface ExamListItemProps {
+  exam: Exam;
+  isSelected: boolean;
+  onSelect: (id: number) => void;
+  onEdit: (exam: Exam) => void;
+  onDelete: (id: number) => void;
+  onConfigure: (examId: number) => void;
+  isReadonly: boolean;
+}
+
+function ExamListItem({
+  exam, isSelected, onSelect, onEdit, onDelete, onConfigure, isReadonly,
+}: ExamListItemProps) {
+  return (
+    <div
+      onClick={() => onSelect(exam.id)}
+      style={{
+        padding: '12px 16px',
+        borderRadius: 8,
+        cursor: 'pointer',
+        marginBottom: 6,
+        border: isSelected ? '2px solid #1677ff' : '1px solid #f0f0f0',
+        background: isSelected ? '#e6f4ff' : '#fff',
+        transition: 'all 0.2s',
+        position: 'relative',
+      }}
+      onMouseEnter={(e) => {
+        if (!isSelected) (e.currentTarget as HTMLElement).style.borderColor = '#d9d9d9';
+      }}
+      onMouseLeave={(e) => {
+        if (!isSelected) (e.currentTarget as HTMLElement).style.borderColor = '#f0f0f0';
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: isSelected ? 600 : 500, fontSize: 14, color: '#1a1a2e', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {isSelected && <TrophyOutlined style={{ color: '#1677ff', marginRight: 6 }} />}
+            {exam.name}
+          </div>
+          <Space size={4}>
+            {exam.exam_type && <Tag style={{ fontSize: 11, lineHeight: '18px' }}>{exam.exam_type}</Tag>}
+            {exam.exam_date ? (
+              <Text type="secondary" style={{ fontSize: 12 }}>{exam.exam_date}</Text>
+            ) : (
+              <Text type="secondary" style={{ fontSize: 12 }}>日期未设定</Text>
+            )}
+          </Space>
+        </div>
+
+        <Dropdown
+          menu={{
+            items: [
+              ...(!isReadonly ? [{ key: 'edit', icon: <EditOutlined />, label: '编辑考试' }] : []),
+              ...(!isReadonly ? [{ key: 'configure', icon: <SettingOutlined />, label: '配置科目' }] : []),
+              ...(!isReadonly
+                ? [{ key: 'delete', icon: <DeleteOutlined />, label: '删除考试', danger: true }]
+                : []),
+            ],
+            onClick: (e) => {
+              e.domEvent.stopPropagation();
+              if (e.key === 'edit') onEdit(exam);
+              if (e.key === 'delete') onDelete(exam.id);
+              if (e.key === 'configure') onConfigure(exam.id);
+            },
+          }}
+          trigger={['click']}
+        >
+          <Button
+            type="text"
+            size="small"
+            icon={<SettingOutlined />}
+            onClick={(e) => e.stopPropagation()}
+            style={{ color: '#999', flexShrink: 0 }}
+          />
+        </Dropdown>
+      </div>
+    </div>
+  );
+}
+
+// ─── main component ──────────────────────────────────
 export default function ScoreManagement() {
   const queryClient = useQueryClient();
   const { currentCohort, isReadonly } = useAppStore();
-  const [examModalVisible, setExamModalVisible] = useState(false);
-  const [editingExam, setEditingExam] = useState<Exam | null>(null);
+
+  // ── core selection state ──
   const [selectedExamId, setSelectedExamId] = useState<number | null>(null);
   const [selectedSubjectId, setSelectedSubjectId] = useState<number | null>(null);
-  const [scoreModalVisible, setScoreModalVisible] = useState(false);
+
+  // ── modal states ──
+  const [examModalVisible, setExamModalVisible] = useState(false);
+  const [editingExam, setEditingExam] = useState<Exam | null>(null);
   const [subjectModalVisible, setSubjectModalVisible] = useState(false);
-  const [configModalVisible, setConfigModalVisible] = useState(false);
-  const [scorePreviewVisible, setScorePreviewVisible] = useState(false);
   const [editingSubject, setEditingSubject] = useState<Subject | null>(null);
+  const [configModalVisible, setConfigModalVisible] = useState(false);
+  const [scoreModalVisible, setScoreModalVisible] = useState(false);
+  const [scorePreviewVisible, setScorePreviewVisible] = useState(false);
   const [scoreImportFilePath, setScoreImportFilePath] = useState<string | null>(null);
   const [scorePreviewData, setScorePreviewData] = useState<{
-    total_rows: number;
-    valid_rows: number;
-    error_rows: number;
-    rows: Array<Record<string, unknown>>;
-    errors: string[];
-    warnings: string[];
+    total_rows: number; valid_rows: number; error_rows: number;
+    rows: Array<Record<string, unknown>>; errors: string[]; warnings: string[];
   } | null>(null);
+
+  // ── forms ──
   const [examForm] = Form.useForm();
   const [scoreForm] = Form.useForm();
   const [subjectForm] = Form.useForm();
   const [configForm] = Form.useForm();
 
-  const { data: exams, isLoading: examsLoading } = useQuery({
+  // ── queries ──
+  const { data: exams = [], isLoading: examsLoading } = useQuery({
     queryKey: ['exams', currentCohort?.id],
     queryFn: () => examService.list(currentCohort!.id),
     enabled: !!currentCohort,
   });
 
-  const { data: subjects } = useQuery({
+  const { data: subjects = [] } = useQuery({
     queryKey: ['subjects'],
     queryFn: () => subjectService.list(),
   });
 
-  const { data: students } = useQuery({
+  const { data: students = [] } = useQuery({
     queryKey: ['allStudents', currentCohort?.id],
     queryFn: () => studentService.getAll(currentCohort!.id),
     enabled: !!currentCohort,
   });
 
-  const { data: scores, isLoading: scoresLoading } = useQuery({
+  const { data: scores = [], isLoading: scoresLoading } = useQuery({
     queryKey: ['scores', selectedExamId, selectedSubjectId],
     queryFn: () => scoreService.getByExam(selectedExamId!, selectedSubjectId!),
     enabled: !!selectedExamId && !!selectedSubjectId,
@@ -77,10 +172,33 @@ export default function ScoreManagement() {
     enabled: !!selectedExamId,
   });
 
+  // ── derived ──
+  const selectedExam = useMemo(
+    () => exams.find((e) => e.id === selectedExamId) ?? null,
+    [exams, selectedExamId],
+  );
+
+  const activeSubjects = useMemo(() => {
+    return examSubjectConfigs
+      .filter((c) => (subjects.find((s) => s.id === c.subject_id)?.is_active ?? false)
+        || c.subject_id === selectedSubjectId)
+      .sort((a, b) => a.sort_order - b.sort_order);
+  }, [examSubjectConfigs, subjects, selectedSubjectId]);
+
+  const selectedSubject = useMemo(
+    () => subjects.find((s) => s.id === selectedSubjectId) ?? null,
+    [subjects, selectedSubjectId],
+  );
+
+  const selectedSubjectInactive = !!selectedSubject && !selectedSubject.is_active;
+
+  const hasConfiguredSubjects = examSubjectConfigs.length > 0;
+
+  // ── sync config form when modal opens ──
   useEffect(() => {
     if (!configModalVisible) return;
     const rows = (subjects || []).map((subject) => {
-      const existing = examSubjectConfigs.find((config) => config.subject_id === subject.id);
+      const existing = examSubjectConfigs.find((c) => c.subject_id === subject.id);
       return {
         enabled: !!existing,
         subject_id: subject.id,
@@ -94,21 +212,25 @@ export default function ScoreManagement() {
     configForm.setFieldsValue({ configs: rows });
   }, [configForm, configModalVisible, examSubjectConfigs, subjects]);
 
+  // ── clear subject if removed from config ──
   useEffect(() => {
     if (!selectedSubjectId) return;
-    const exists = examSubjectConfigs.some((config) => config.subject_id === selectedSubjectId);
-    if (!exists) {
+    if (!examSubjectConfigs.some((c) => c.subject_id === selectedSubjectId)) {
       setSelectedSubjectId(null);
     }
   }, [examSubjectConfigs, selectedSubjectId]);
 
+  // ── mutations (reuse existing logic) ──
   const createExamMutation = useMutation({
     mutationFn: (data: Partial<Exam>) => examService.create(data),
-    onSuccess: () => {
+    onSuccess: (newExam) => {
       queryClient.invalidateQueries({ queryKey: ['exams'] });
       message.success('考试创建成功');
       setExamModalVisible(false);
       examForm.resetFields();
+      // auto-select the new exam
+      setSelectedExamId(newExam.id);
+      setSelectedSubjectId(null);
     },
     onError: (err: Error) => message.error(err.message),
   });
@@ -129,7 +251,10 @@ export default function ScoreManagement() {
     onSuccess: (_: void, id: number) => {
       queryClient.invalidateQueries({ queryKey: ['exams'] });
       message.success('考试已删除');
-      if (selectedExamId === id) { setSelectedExamId(null); setSelectedSubjectId(null); }
+      if (selectedExamId === id) {
+        setSelectedExamId(null);
+        setSelectedSubjectId(null);
+      }
     },
     onError: (err: Error) => message.error(err.message),
   });
@@ -189,15 +314,23 @@ export default function ScoreManagement() {
   });
 
   const saveConfigMutation = useMutation({
-    mutationFn: (configs: ExamSubjectConfig[]) => examService.saveSubjectConfigs(selectedExamId!, configs),
+    mutationFn: (configs: ExamSubjectConfig[]) =>
+      examService.saveSubjectConfigs(selectedExamId!, configs),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['examSubjectConfigs'] });
       queryClient.invalidateQueries({ queryKey: ['scoreStats'] });
-      message.success('考试科目配置已保存');
+      message.success('科目配置已保存');
       setConfigModalVisible(false);
     },
     onError: (err: Error) => message.error(err.message),
   });
+
+  // ── event handlers ──
+  const handleSelectExam = (examId: number) => {
+    if (examId === selectedExamId) return;
+    setSelectedExamId(examId);
+    setSelectedSubjectId(null);
+  };
 
   const handleCreateExam = async () => {
     const values = await examForm.validateFields();
@@ -224,27 +357,49 @@ export default function ScoreManagement() {
     setExamModalVisible(true);
   };
 
-  const handleDeleteExam = (id: number) => {
-    deleteExamMutation.mutate(id);
-  };
+  const handleDeleteExam = (id: number) => deleteExamMutation.mutate(id);
 
   const handleOpenConfig = (examId: number) => {
-    const existingConfigs = selectedExamId === examId ? examSubjectConfigs : [];
-    setSelectedExamId(examId);
-    const rows = (subjects || []).map((subject) => {
-      const existing = existingConfigs.find((config) => config.subject_id === subject.id);
-      return {
-        enabled: !!existing,
-        subject_id: subject.id,
-        subject_name: subject.name,
-        full_score: existing?.full_score ?? 100,
-        pass_score: existing?.pass_score ?? 60,
-        excellent_score: existing?.excellent_score ?? 90,
-        sort_order: existing?.sort_order ?? subject.sort_order ?? 0,
-      };
-    });
-    configForm.setFieldsValue({ configs: rows });
+    if (examId !== selectedExamId) {
+      setSelectedExamId(examId);
+      // The config modal will populate from examSubjectConfigs
+      // which re-fetches when selectedExamId changes.
+      // We defer opening the modal in a useEffect so we have the right data.
+    }
     setConfigModalVisible(true);
+  };
+
+  // Ensure handleOpenConfig also selects the exam if needed
+  const handleConfigureCurrentExam = () => {
+    if (!selectedExamId) return;
+    setConfigModalVisible(true);
+  };
+
+  const handleSaveConfigs = async () => {
+    const values = await configForm.validateFields();
+    const configs = (values.configs || [])
+      .filter((item: { enabled?: boolean }) => item.enabled)
+      .map((item: ExamSubjectConfig) => {
+        const full = Number(item.full_score);
+        const pass = Number(item.pass_score);
+        const excellent = Number(item.excellent_score);
+        if (pass > full) {
+          message.error(`科目配置错误：及格线(${pass})不能高于满分(${full})`);
+          throw new Error('pass_score > full_score');
+        }
+        if (excellent > full) {
+          message.error(`科目配置错误：优秀线(${excellent})不能高于满分(${full})`);
+          throw new Error('excellent_score > full_score');
+        }
+        return {
+          subject_id: item.subject_id,
+          full_score: full,
+          pass_score: pass,
+          excellent_score: excellent,
+          sort_order: Number(item.sort_order ?? 0),
+        };
+      });
+    saveConfigMutation.mutate(configs);
   };
 
   const handleCreateSubject = async () => {
@@ -267,13 +422,9 @@ export default function ScoreManagement() {
     setSubjectModalVisible(true);
   };
 
-  const handleDeleteSubject = (id: number) => {
-    deleteSubjectMutation.mutate(id);
-  };
-
-  const handleToggleSubjectActive = (subject: Subject) => {
-    toggleSubjectActiveMutation.mutate({ id: subject.id, is_active: !subject.is_active });
-  };
+  const handleDeleteSubject = (id: number) => deleteSubjectMutation.mutate(id);
+  const handleToggleSubjectActive = (s: Subject) =>
+    toggleSubjectActiveMutation.mutate({ id: s.id, is_active: !s.is_active });
 
   const handleSaveScores = async () => {
     const values = await scoreForm.validateFields();
@@ -290,10 +441,7 @@ export default function ScoreManagement() {
     if (!selectedExamId || !selectedSubjectId) return;
     try {
       const selected = await import('@tauri-apps/plugin-dialog').then((m) =>
-        m.open({
-          multiple: false,
-          filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }],
-        })
+        m.open({ multiple: false, filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }] }),
       );
       if (!selected || typeof selected !== 'string') return;
       const preview = await scoreService.previewExcel(selectedExamId, selectedSubjectId, selected);
@@ -305,14 +453,14 @@ export default function ScoreManagement() {
     }
   };
 
-  const handleConfirmImportScores = async () => {
+  const handleConfirmImport = async () => {
     if (!selectedExamId || !selectedSubjectId || !scoreImportFilePath) return;
     try {
       const result = await scoreService.importExcel(selectedExamId, selectedSubjectId, scoreImportFilePath);
       if (result.errors.length > 0) {
         message.warning(`成功导入 ${result.success} 条，${result.errors.length} 条失败`);
       } else if (result.warnings.length > 0) {
-        message.warning(`成功导入 ${result.success} 条，存在 ${result.warnings.length} 条覆盖提醒`);
+        message.warning(`成功导入 ${result.success} 条，${result.warnings.length} 条覆盖提醒`);
       } else {
         message.success(`成功导入 ${result.success} 条记录`);
       }
@@ -327,7 +475,7 @@ export default function ScoreManagement() {
     }
   };
 
-  const handleDownloadScoreTemplate = async () => {
+  const handleDownloadTemplate = async () => {
     try {
       const { save } = await import('@tauri-apps/plugin-dialog');
       const filePath = await save({
@@ -336,35 +484,19 @@ export default function ScoreManagement() {
       });
       if (!filePath) return;
       await configService.downloadTemplate('score', filePath);
-      message.success('成绩模板下载成功');
+      message.success('导入模板下载成功');
     } catch (err: unknown) {
       message.error(err instanceof Error ? err.message : '模板下载失败');
     }
-  };
-
-  const handleSaveExamSubjectConfigs = async () => {
-    const values = await configForm.validateFields();
-    const configs = (values.configs || [])
-      .filter((item: { enabled?: boolean }) => item.enabled)
-      .map((item: ExamSubjectConfig) => ({
-        subject_id: item.subject_id,
-        full_score: Number(item.full_score),
-        pass_score: Number(item.pass_score),
-        excellent_score: Number(item.excellent_score),
-        sort_order: Number(item.sort_order ?? 0),
-      }));
-    saveConfigMutation.mutate(configs);
   };
 
   const handleExportScores = async () => {
     if (!selectedExamId || !selectedSubjectId) return;
     try {
       const { save } = await import('@tauri-apps/plugin-dialog');
-      const exam = (exams || []).find((item) => item.id === selectedExamId);
-      const subject = (subjects || []).find((item) => item.id === selectedSubjectId);
       const filePath = await save({
         filters: [{ name: 'Excel', extensions: ['xlsx'] }],
-        defaultPath: `${exam?.name || '考试'}_${subject?.name || '科目'}_成绩.xlsx`,
+        defaultPath: `${selectedExam?.name || '考试'}_${selectedSubject?.name || '科目'}_成绩.xlsx`,
       });
       if (!filePath) return;
       await scoreService.exportExcel(selectedExamId, selectedSubjectId, filePath);
@@ -374,326 +506,679 @@ export default function ScoreManagement() {
     }
   };
 
-  useKeyboardShortcut(
-    'n',
-    () => {
-      if (isReadonly) return;
-      setEditingExam(null);
-      examForm.resetFields();
-      setExamModalVisible(true);
-    },
-    { ctrlOrMeta: true, enabled: !isReadonly },
-  );
+  // ── keyboard shortcuts ──
+  useKeyboardShortcut('n', () => {
+    if (isReadonly) return;
+    setEditingExam(null);
+    examForm.resetFields();
+    setExamModalVisible(true);
+  }, { ctrlOrMeta: true, enabled: !isReadonly });
 
   useKeyboardShortcut('s', handleSaveScores, {
     ctrlOrMeta: true,
     enabled: scoreModalVisible && !saveScoresMutation.isPending,
   });
 
-  const examColumns = [
-    { title: '考试名称', dataIndex: 'name', key: 'name' },
-    { title: '类型', dataIndex: 'exam_type', key: 'exam_type', render: (v: string | null) => v || '-' },
-    { title: '考试日期', dataIndex: 'exam_date', key: 'exam_date', render: (v: string | null) => v || '-' },
-    {
-      title: '操作',
-      key: 'action',
-      width: 320,
-      render: (_: unknown, record: Exam) => (
-        <Space size="small">
-          <Button type="link" size="small" onClick={() => setSelectedExamId(record.id)}>选择</Button>
-          {!isReadonly && (
-            <Button type="link" size="small" icon={<SettingOutlined />} onClick={() => handleOpenConfig(record.id)}>
-              配置科目
-            </Button>
-          )}
-          {!isReadonly && (
-            <>
-              <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEditExam(record)}>编辑</Button>
-              <Popconfirm title="删除考试会同时删除该考试的所有成绩数据，确认删除？" onConfirm={() => handleDeleteExam(record.id)}>
-                <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
-              </Popconfirm>
-            </>
-          )}
-        </Space>
-      ),
-    },
-  ];
-
-  const subjectColumns = [
-    { title: '科目名称', dataIndex: 'name', key: 'name' },
-    { title: '排序', dataIndex: 'sort_order', key: 'sort_order', width: 80 },
-    {
-      title: '状态',
-      dataIndex: 'is_active',
-      key: 'is_active',
-      width: 90,
-      render: (value: boolean) => <Tag color={value ? 'green' : 'default'}>{value ? '启用中' : '已停用'}</Tag>,
-    },
-    { title: '备注', dataIndex: 'remark', key: 'remark', ellipsis: true, render: (v: string | null) => v || '-' },
-    {
-      title: '操作',
-      key: 'action',
-      width: 240,
-      render: (_: unknown, record: Subject) => (
-        <Space size="small">
-          <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEditSubject(record)}>编辑</Button>
-          <Popconfirm
-            title={record.is_active ? '停用后历史数据会保留，但新录入时不再默认可选，确认停用？' : '确认重新启用该科目？'}
-            onConfirm={() => handleToggleSubjectActive(record)}
-          >
-            <Button type="link" size="small">{record.is_active ? '停用' : '启用'}</Button>
-          </Popconfirm>
-          {!record.is_active && (
-            <Popconfirm title="仅未被历史作业或成绩引用的停用科目才允许删除，确认删除？" onConfirm={() => handleDeleteSubject(record.id)}>
-              <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
-            </Popconfirm>
-          )}
-          {record.is_active && (
-            <Button type="link" size="small" danger disabled icon={<DeleteOutlined />}>删除</Button>
-          )}
-        </Space>
-      ),
-    },
-  ];
-
-  const selectableSubjects = (subjects || []).filter((subject) => {
-    const config = examSubjectConfigs.find((item) => item.subject_id === subject.id);
-    if (!config) return false;
-    if (subject.is_active) return true;
-    return subject.id === selectedSubjectId;
-  });
-
-  const selectedSubject = (subjects || []).find((subject) => subject.id === selectedSubjectId);
-  const selectedSubjectInactive = !!selectedSubject && !selectedSubject.is_active;
-
-  const subjectSelectOptions = selectableSubjects.map((subject) => {
-    const config = examSubjectConfigs.find((item) => item.subject_id === subject.id);
-    return {
-      value: subject.id,
-      label: `${subject.is_active ? subject.name : `${subject.name}（已停用）`} / 满分 ${config?.full_score ?? 100}`,
-    };
-  });
-
-  const subjectTabAddButton = !isReadonly && (
-    <Button
-      type="primary"
-      icon={<PlusOutlined />}
-      onClick={() => {
-        setEditingSubject(null);
-        subjectForm.resetFields();
-        subjectForm.setFieldsValue({ is_active: true, sort_order: 0 });
-        setSubjectModalVisible(true);
-      }}
-      style={{ marginBottom: 16 }}
-    >
-      新增科目
-    </Button>
-  );
-
-  const subjectStatusHint = selectedSubjectInactive ? (
-    <Tag color="orange">当前科目已停用，仅保留历史查看与导出</Tag>
-  ) : null;
-
-  const scoreActionButtons = !isReadonly && selectedSubjectId && selectedSubject?.is_active ? (
-    <>
-      <Button
-        type="primary"
-        onClick={() => {
-          scoreForm.resetFields();
-          const initialValues: Record<string, number | null> = {};
-          (students || []).forEach((s) => {
-            const score = (scores || []).find((sc) => sc.student_id === s.id);
-            initialValues[`score_${s.id}`] = score?.score_value ?? null;
-          });
-          scoreForm.setFieldsValue(initialValues);
-          setScoreModalVisible(true);
-        }}
-      >
-        录入成绩
-      </Button>
-      <Button icon={<UploadOutlined />} onClick={handleImportScores}>
-        导入成绩
-      </Button>
-      <Button icon={<DownloadOutlined />} onClick={handleDownloadScoreTemplate}>
-        下载模板
-      </Button>
-    </>
-  ) : null;
-
-  const scoreExportButton = selectedSubjectId ? (
-    <Button icon={<DownloadOutlined />} onClick={handleExportScores}>
-      导出成绩
-    </Button>
-  ) : null;
-
-  const scoreColumns = [
-    { title: '姓名', dataIndex: 'student_name', key: 'student_name' },
-    { title: '学号', dataIndex: 'student_no', key: 'student_no' },
-    {
-      title: '成绩',
-      dataIndex: 'score_value',
-      key: 'score_value',
-      render: (v: number | null) => v !== null ? v : '-',
-    },
-    {
-      title: '排名',
-      dataIndex: 'rank_no',
-      key: 'rank_no',
-      render: (v: number | null) => v ? <Tag color="blue">{v}</Tag> : '-',
-    },
-  ];
-
-  const scoreDataSource = (students || []).map((s) => {
-    const score = (scores || []).find((sc) => sc.student_id === s.id);
+  // ── score table data ──
+  const scoreDataSource = students.map((s) => {
+    const sc = scores.find((r) => r.student_id === s.id);
     return {
       key: s.id,
       student_name: s.name,
       student_no: s.student_no,
-      score_value: score?.score_value ?? null,
-      rank_no: score?.rank_no ?? null,
+      score_value: sc?.score_value ?? null,
+      rank_no: sc?.rank_no ?? null,
     };
   });
 
-  const tabItems = [
-    {
-      key: 'exams',
-      label: '考试管理',
-      children: (
-        <div>
+  // ── subject options for selector ──
+  const subjectOptions = activeSubjects.map((c) => {
+    const s = subjects.find((sub) => sub.id === c.subject_id);
+    return {
+      value: c.subject_id,
+      label: `${s?.name ?? `科目 #${c.subject_id}`}（满分 ${c.full_score}）`,
+    };
+  });
+
+  // ── render ──
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {/* Page Header */}
+      <div className="page-header">
+        <Space>
+          <Title level={4} style={{ margin: 0 }}>成绩管理</Title>
+          {selectedExam && (
+            <>
+              <Divider type="vertical" />
+              <Space size={4}>
+                <Text type="secondary" style={{ fontSize: 13 }}>正在管理：</Text>
+                <Text strong style={{ fontSize: 13 }}>{selectedExam.name}</Text>
+                {selectedExam.exam_type && <Tag>{selectedExam.exam_type}</Tag>}
+              </Space>
+            </>
+          )}
+        </Space>
+        <Space>
           {!isReadonly && (
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditingExam(null); examForm.resetFields(); setExamModalVisible(true); }} style={{ marginBottom: 16 }}>
+            <Button
+              icon={<PlusOutlined />}
+              onClick={() => {
+                setEditingExam(null);
+                examForm.resetFields();
+                setExamModalVisible(true);
+              }}
+            >
               创建考试
             </Button>
           )}
-          <Table
-            dataSource={exams || []}
-            columns={examColumns}
-            rowKey="id"
-            loading={examsLoading}
-            pagination={false}
-          />
-        </div>
-      ),
-    },
-    {
-      key: 'subjects',
-      label: '科目管理',
-      children: (
-        <div>
-          {subjectTabAddButton}
-          <Table
-            dataSource={subjects || []}
-            columns={subjectColumns}
-            rowKey="id"
-            pagination={false}
-          />
-        </div>
-      ),
-    },
-    {
-      key: 'scores',
-      label: '成绩录入',
-      children: selectedExamId ? (
-        <div>
-          <Space style={{ marginBottom: 16 }}>
-            <Select
-              style={{ width: 200 }}
-              placeholder="选择考试"
-              value={selectedExamId}
-              onChange={(val) => { setSelectedExamId(val); setSelectedSubjectId(null); }}
-              options={(exams || []).map((e) => ({ value: e.id, label: e.name }))}
-            />
-            <Select
-              style={{ width: 200 }}
-              placeholder="选择科目"
-              value={selectedSubjectId}
-              onChange={setSelectedSubjectId}
-              options={subjectSelectOptions}
-            />
-            {scoreActionButtons}
-            {scoreExportButton}
-          </Space>
-          {examSubjectConfigs.length === 0 && (
-            <Alert
-              type="info"
-              showIcon
-              style={{ marginBottom: 16 }}
-              message="当前考试尚未配置科目、满分和统计规则，请先在考试管理中完成配置。"
-            />
-          )}
-          {subjectStatusHint}
+          <Button
+            icon={<PlusOutlined />}
+            onClick={() => {
+              setEditingSubject(null);
+              subjectForm.resetFields();
+              subjectForm.setFieldsValue({ is_active: true, sort_order: 0 });
+              setSubjectModalVisible(true);
+            }}
+          >
+            新增科目
+          </Button>
+        </Space>
+      </div>
 
-          {selectedSubjectId && (
-            <>
-              {scoreStats && (
-                <Descriptions bordered size="small" style={{ marginBottom: 16 }} column={4}>
-                  <Descriptions.Item label="满分">{scoreStats.full_score}</Descriptions.Item>
-                  <Descriptions.Item label="平均分">{scoreStats.avg_score.toFixed(1)}</Descriptions.Item>
-                  <Descriptions.Item label="最高分">{scoreStats.max_score}</Descriptions.Item>
-                  <Descriptions.Item label="最低分">{scoreStats.min_score}</Descriptions.Item>
-                  <Descriptions.Item label="及格率">{(scoreStats.pass_rate * 100).toFixed(1)}%</Descriptions.Item>
-                  <Descriptions.Item label="及格线">{scoreStats.pass_score}</Descriptions.Item>
-                  <Descriptions.Item label="优秀率">{(scoreStats.excellent_rate * 100).toFixed(1)}%</Descriptions.Item>
-                  <Descriptions.Item label="优秀线">{scoreStats.excellent_score}</Descriptions.Item>
-                </Descriptions>
-              )}
-              <Table
-                dataSource={scoreDataSource}
-                columns={scoreColumns}
-                rowKey="key"
-                loading={scoresLoading}
-                pagination={false}
+      {/* Main layout: sidebar + workbench */}
+      <div style={{ flex: 1, display: 'flex', gap: 16, minHeight: 0 }}>
+        {/* ── LEFT: Exam List Sidebar ── */}
+        <Card
+          size="small"
+          styles={{
+            body: { padding: 12 },
+          }}
+          style={{
+            width: 300,
+            flexShrink: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            marginBottom: 12, padding: '0 4px',
+          }}>
+            <Text strong style={{ fontSize: 13, color: '#666' }}>考试列表</Text>
+            <Badge count={exams.length} size="small" showZero color="#1677ff" overflowCount={999} />
+          </div>
+
+          <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+            {examsLoading ? (
+              <Skeleton active paragraph={{ rows: 4 }} />
+            ) : exams.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '32px 16px' }}>
+                <ExperimentOutlined style={{ fontSize: 32, color: '#d9d9d9' }} />
+                <Paragraph type="secondary" style={{ marginTop: 12, fontSize: 13 }}>
+                  还没有考试记录
+                </Paragraph>
+                {!isReadonly && (
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<PlusOutlined />}
+                    onClick={() => {
+                      setEditingExam(null);
+                      examForm.resetFields();
+                      setExamModalVisible(true);
+                    }}
+                  >
+                    创建第一场考试
+                  </Button>
+                )}
+              </div>
+            ) : (
+              exams.map((exam) => (
+                <ExamListItem
+                  key={exam.id}
+                  exam={exam}
+                  isSelected={exam.id === selectedExamId}
+                  onSelect={handleSelectExam}
+                  onEdit={handleEditExam}
+                  onDelete={handleDeleteExam}
+                  onConfigure={handleOpenConfig}
+                  isReadonly={isReadonly}
+                />
+              ))
+            )}
+          </div>
+
+          {/* Global subject pool */}
+          <Divider style={{ margin: '12px 0 8px' }} />
+          <div style={{ padding: '0 4px', marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>
+              <Text strong style={{ fontSize: 13, color: '#666' }}>科目池</Text>
+              <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>全局可用科目</Text>
+            </span>
+            {!isReadonly && (
+              <Button
+                type="link"
                 size="small"
-              />
+                icon={<PlusOutlined />}
+                onClick={() => {
+                  setEditingSubject(null);
+                  subjectForm.resetFields();
+                  subjectForm.setFieldsValue({ is_active: true, sort_order: 0 });
+                  setSubjectModalVisible(true);
+                }}
+                style={{ fontSize: 12, padding: 0 }}
+              >
+                新增
+              </Button>
+            )}
+          </div>
+          <div style={{ maxHeight: 160, overflowY: 'auto' }}>
+            {subjects.length === 0 ? (
+              <Text type="secondary" style={{ fontSize: 12, padding: '0 4px' }}>暂无科目</Text>
+            ) : (
+              subjects.slice(0, 10).map((s) => (
+                <div key={s.id} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '4px 8px', fontSize: 12,
+                }}>
+                  <Space size={4}>
+                    {s.is_active ? (
+                      <Badge status="success" />
+                    ) : (
+                      <Badge status="default" />
+                    )}
+                    <Text style={{ fontSize: 12 }} delete={!s.is_active}>{s.name}</Text>
+                  </Space>
+                  {!isReadonly && (
+                    <Space size={0}>
+                      <Button
+                        type="link"
+                        size="small"
+                        onClick={() => handleEditSubject(s)}
+                        style={{ fontSize: 11, padding: '0 4px', height: 20 }}
+                      >
+                        编辑
+                      </Button>
+                      <Popconfirm
+                        title={s.is_active ? '停用后历史数据会保留，确认停用？' : '确认重新启用该科目？'}
+                        onConfirm={() => handleToggleSubjectActive(s)}
+                      >
+                        <Button
+                          type="link"
+                          size="small"
+                          style={{ fontSize: 11, padding: '0 4px', height: 20 }}
+                        >
+                          {s.is_active ? '停用' : '启用'}
+                        </Button>
+                      </Popconfirm>
+                      {!s.is_active && (
+                        <Popconfirm
+                          title="仅未被历史作业或成绩引用的停用科目才允许删除，确认删除？"
+                          onConfirm={() => handleDeleteSubject(s.id)}
+                        >
+                          <Button
+                            type="link"
+                            size="small"
+                            danger
+                            style={{ fontSize: 11, padding: '0 4px', height: 20 }}
+                          >
+                            删除
+                          </Button>
+                        </Popconfirm>
+                      )}
+                    </Space>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
+
+        {/* ── RIGHT: Exam Workbench ── */}
+        <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {!selectedExam ? (
+            /* ── No exam selected: Empty State ── */
+            <Card style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{ textAlign: 'center', padding: '48px 0', maxWidth: 400 }}>
+                <TrophyOutlined style={{ fontSize: 56, color: '#d9d9d9', marginBottom: 24 }} />
+                <Title level={4} style={{ color: '#999', marginBottom: 8 }}>
+                  选择一场考试开始管理
+                </Title>
+                <Paragraph type="secondary" style={{ marginBottom: 24 }}>
+                  在左侧列表中选择一场考试，即可进入该考试的工作台，<br />
+                  进行科目配置、成绩录入和排名查看。
+                </Paragraph>
+                <Space direction="vertical" style={{ width: '100%' }} align="center">
+                  {exams.length > 0 ? (
+                    <Text type="secondary" style={{ fontSize: 13 }}>
+                      <ArrowLeftOutlined style={{ marginRight: 4 }} />
+                      点击左侧考试列表中的任意考试即可开始
+                    </Text>
+                  ) : (
+                    !isReadonly && (
+                      <Button
+                        type="primary"
+                        icon={<PlusOutlined />}
+                        onClick={() => {
+                          setEditingExam(null);
+                          examForm.resetFields();
+                          setExamModalVisible(true);
+                        }}
+                      >
+                        创建第一场考试
+                      </Button>
+                    )
+                  )}
+                </Space>
+              </div>
+            </Card>
+          ) : (
+            /* ── Exam Workbench ── */
+            <>
+              {/* Section 1: Exam Info Banner */}
+              <Card size="small" style={{ borderLeft: '3px solid #1677ff' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Space size={12}>
+                    <TrophyOutlined style={{ fontSize: 22, color: '#1677ff' }} />
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Title level={5} style={{ margin: 0 }}>{selectedExam.name}</Title>
+                        {selectedExam.exam_type && <Tag color="blue">{selectedExam.exam_type}</Tag>}
+                      </div>
+                      <Space size={8} style={{ marginTop: 4 }}>
+                        {selectedExam.exam_date ? (
+                          <Text type="secondary" style={{ fontSize: 13 }}>
+                            考试日期：{selectedExam.exam_date}
+                          </Text>
+                        ) : (
+                          <Text type="secondary" style={{ fontSize: 13 }}>未设定日期</Text>
+                        )}
+                        {selectedExam.remark && (
+                          <Text type="secondary" style={{ fontSize: 13 }}>备注：{selectedExam.remark}</Text>
+                        )}
+                        {hasConfiguredSubjects && (
+                          <Tag color="green">{activeSubjects.length} 个科目的配置</Tag>
+                        )}
+                      </Space>
+                    </div>
+                  </Space>
+                  {!isReadonly && (
+                    <Space size={8}>
+                      <Button
+                        size="small"
+                        icon={<EditOutlined />}
+                        onClick={() => handleEditExam(selectedExam)}
+                      >
+                        编辑考试
+                      </Button>
+                      <Popconfirm
+                        title="删除考试会同时删除该考试的所有成绩数据，确认删除？"
+                        onConfirm={() => handleDeleteExam(selectedExam.id)}
+                      >
+                        <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                      </Popconfirm>
+                    </Space>
+                  )}
+                </div>
+              </Card>
+
+              {/* Section 2: Subject Configuration */}
+              <Card
+                size="small"
+                title={
+                  <Space>
+                    <BookOutlined />
+                    <span>科目配置与评分规则</span>
+                    {hasConfiguredSubjects && (
+                      <Tag color="processing">{activeSubjects.length} 个科目</Tag>
+                    )}
+                  </Space>
+                }
+                extra={
+                  !isReadonly && (
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<SettingOutlined />}
+                      onClick={handleConfigureCurrentExam}
+                    >
+                      {hasConfiguredSubjects ? '管理科目配置' : '配置考试科目'}
+                    </Button>
+                  )
+                }
+              >
+                {!hasConfiguredSubjects ? (
+                  <div style={{
+                    textAlign: 'center', padding: '24px 0',
+                    background: '#fafafa', borderRadius: 8,
+                  }}>
+                    <ExclamationCircleOutlined style={{ fontSize: 28, color: '#faad14', marginBottom: 12 }} />
+                    <Paragraph type="secondary" style={{ marginBottom: 16 }}>
+                      当前考试尚未配置科目
+                    </Paragraph>
+                    {!isReadonly && (
+                      <Button
+                        type="primary"
+                        icon={<SettingOutlined />}
+                        onClick={handleConfigureCurrentExam}
+                      >
+                        立即配置考试科目
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {activeSubjects.map((c) => {
+                      const sub = subjects.find((s) => s.id === c.subject_id);
+                      const isCurrentSubject = c.subject_id === selectedSubjectId;
+                      return (
+                        <div
+                          key={c.subject_id}
+                          onClick={() => {
+                            setSelectedSubjectId(
+                              isCurrentSubject ? null : c.subject_id,
+                            );
+                          }}
+                          style={{
+                            padding: '10px 16px',
+                            borderRadius: 8,
+                            border: isCurrentSubject
+                              ? '2px solid #1677ff'
+                              : '1px solid #e8e8e8',
+                            background: isCurrentSubject ? '#e6f4ff' : '#fff',
+                            cursor: 'pointer',
+                            minWidth: 160,
+                            transition: 'all 0.2s',
+                            userSelect: 'none',
+                          }}
+                        >
+                          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+                            {isCurrentSubject && (
+                              <CheckCircleOutlined
+                                style={{ color: '#1677ff', marginRight: 4 }}
+                              />
+                            )}
+                            {sub?.name ?? `科目 #${c.subject_id}`}
+                          </div>
+                          <Text type="secondary" style={{ fontSize: 11 }}>
+                            满分 {c.full_score} · 及格 {c.pass_score} · 优秀 {c.excellent_score}
+                          </Text>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </Card>
+
+              {/* Section 3: Score Entry */}
+              {hasConfiguredSubjects && (
+                <Card
+                  size="small"
+                  title={
+                    <Space>
+                      <FileTextOutlined />
+                      <span>成绩录入与操作</span>
+                      {selectedSubject && (
+                        <>
+                          <Tag color="blue">{selectedSubject.name}</Tag>
+                          {selectedSubjectInactive && (
+                            <Tag color="orange">已停用（仅可查看导出）</Tag>
+                          )}
+                        </>
+                      )}
+                    </Space>
+                  }
+                  extra={
+                    <Space size={8}>
+                      {selectedSubjectId && (
+                        <Button
+                          size="small"
+                          icon={<DownloadOutlined />}
+                          onClick={handleExportScores}
+                        >
+                          导出成绩
+                        </Button>
+                      )}
+                      {!isReadonly && selectedSubjectId && !selectedSubjectInactive && (
+                        <>
+                          <Button
+                            size="small"
+                            type="primary"
+                            onClick={() => {
+                              scoreForm.resetFields();
+                              const iv: Record<string, number | null> = {};
+                              students.forEach((s) => {
+                                const sc = scores.find(
+                                  (r) => r.student_id === s.id,
+                                );
+                                iv[`score_${s.id}`] = sc?.score_value ?? null;
+                              });
+                              scoreForm.setFieldsValue(iv);
+                              setScoreModalVisible(true);
+                            }}
+                          >
+                            录入成绩
+                          </Button>
+                          <Button
+                            size="small"
+                            icon={<UploadOutlined />}
+                            onClick={handleImportScores}
+                          >
+                            导入
+                          </Button>
+                          <Button
+                            size="small"
+                            icon={<DownloadOutlined />}
+                            onClick={handleDownloadTemplate}
+                          >
+                            下载模板
+                          </Button>
+                        </>
+                      )}
+                    </Space>
+                  }
+                >
+                  {/* Subject Selector */}
+                  <div style={{ marginBottom: 16 }}>
+                    <Select
+                      style={{ width: 280 }}
+                      placeholder="选择要操作的科目"
+                      value={selectedSubjectId}
+                      onChange={setSelectedSubjectId}
+                      options={subjectOptions}
+                      allowClear
+                    />
+                  </div>
+
+                  {selectedSubjectId ? (
+                    <>
+                      {/* Statistics */}
+                      {scoreStats && (
+                        <div
+                          style={{
+                            marginBottom: 16,
+                            padding: '12px 16px',
+                            background: '#fafafa',
+                            borderRadius: 8,
+                          }}
+                        >
+                          <Text strong style={{ fontSize: 12, color: '#999', display: 'block', marginBottom: 8 }}>
+                            成绩统计
+                          </Text>
+                          <Row gutter={[16, 8]}>
+                            <Col span={6}>
+                              <div style={{ textAlign: 'center' }}>
+                                <div style={{ fontSize: 22, fontWeight: 700, color: '#1677ff' }}>
+                                  {scoreStats.avg_score.toFixed(1)}
+                                </div>
+                                <div style={{ fontSize: 11, color: '#999' }}>平均分</div>
+                              </div>
+                            </Col>
+                            <Col span={6}>
+                              <div style={{ textAlign: 'center' }}>
+                                <div style={{ fontSize: 22, fontWeight: 700, color: '#52c41a' }}>
+                                  {scoreStats.max_score}
+                                </div>
+                                <div style={{ fontSize: 11, color: '#999' }}>最高分</div>
+                              </div>
+                            </Col>
+                            <Col span={6}>
+                              <div style={{ textAlign: 'center' }}>
+                                <div style={{ fontSize: 22, fontWeight: 700, color: '#ff4d4f' }}>
+                                  {scoreStats.min_score}
+                                </div>
+                                <div style={{ fontSize: 11, color: '#999' }}>最低分</div>
+                              </div>
+                            </Col>
+                            <Col span={6}>
+                              <div style={{ textAlign: 'center' }}>
+                                <div style={{ fontSize: 22, fontWeight: 700, color: '#722ed1' }}>
+                                  {(scoreStats.pass_rate * 100).toFixed(0)}%
+                                </div>
+                                <div style={{ fontSize: 11, color: '#999' }}>及格率</div>
+                              </div>
+                            </Col>
+                            <Col span={6}>
+                              <div style={{ textAlign: 'center' }}>
+                                <div style={{ fontSize: 22, fontWeight: 700, color: '#fa8c16' }}>
+                                  {(scoreStats.excellent_rate * 100).toFixed(0)}%
+                                </div>
+                                <div style={{ fontSize: 11, color: '#999' }}>优秀率</div>
+                              </div>
+                            </Col>
+                            <Col span={6}>
+                              <div style={{ textAlign: 'center' }}>
+                                <div style={{ fontSize: 16, fontWeight: 600, color: '#666' }}>
+                                  {scoreStats.full_score}
+                                </div>
+                                <div style={{ fontSize: 11, color: '#999' }}>满分</div>
+                              </div>
+                            </Col>
+                            <Col span={6}>
+                              <div style={{ textAlign: 'center' }}>
+                                <div style={{ fontSize: 16, fontWeight: 600, color: '#666' }}>
+                                  {scoreStats.pass_score}
+                                </div>
+                                <div style={{ fontSize: 11, color: '#999' }}>及格线</div>
+                              </div>
+                            </Col>
+                            <Col span={6}>
+                              <div style={{ textAlign: 'center' }}>
+                                <div style={{ fontSize: 16, fontWeight: 600, color: '#666' }}>
+                                  {scoreStats.excellent_score}
+                                </div>
+                                <div style={{ fontSize: 11, color: '#999' }}>优秀线</div>
+                              </div>
+                            </Col>
+                          </Row>
+                        </div>
+                      )}
+
+                      {/* Score Table */}
+                      <Table
+                        dataSource={scoreDataSource}
+                        columns={[
+                          { title: '姓名', dataIndex: 'student_name', key: 'student_name', width: 120 },
+                          { title: '学号', dataIndex: 'student_no', key: 'student_no', width: 120 },
+                          {
+                            title: '成绩',
+                            dataIndex: 'score_value',
+                            key: 'score_value',
+                            width: 100,
+                            render: (v: number | null) =>
+                              v !== null ? <Text strong>{v}</Text> : <Text type="secondary">-</Text>,
+                          },
+                          {
+                            title: '排名',
+                            dataIndex: 'rank_no',
+                            key: 'rank_no',
+                            width: 80,
+                            render: (v: number | null) =>
+                              v ? <Tag color="blue">{v}</Tag> : '-',
+                          },
+                        ]}
+                        rowKey="key"
+                        loading={scoresLoading}
+                        size="small"
+                        pagination={students.length > 20 ? { pageSize: 20, showSizeChanger: false } : false}
+                        locale={{ emptyText: '暂无成绩记录' }}
+                      />
+                    </>
+                  ) : (
+                    <div style={{
+                      textAlign: 'center', padding: '24px 0',
+                      background: '#fafafa', borderRadius: 8,
+                    }}>
+                      <Text type="secondary">请在上方选择一个科目，即可查看和录入成绩</Text>
+                    </div>
+                  )}
+                </Card>
+              )}
+
+              {/* Section 4: Rankings */}
+              <Card
+                size="small"
+                title={
+                  <Space>
+                    <BarChartOutlined />
+                    <span>总分排名</span>
+                    {rankings && rankings.length > 0 && (
+                      <Tag color="blue">{rankings.length} 人</Tag>
+                    )}
+                  </Space>
+                }
+              >
+                {rankings && rankings.length > 0 ? (
+                  <Table
+                    dataSource={rankings.map((r) => ({ ...r, key: r.student_id }))}
+                    columns={[
+                      {
+                        title: '排名',
+                        dataIndex: 'rank_no',
+                        key: 'rank_no',
+                        width: 80,
+                        render: (v: number) => {
+                          if (v === 1) return <Tag color="gold">🥇 {v}</Tag>;
+                          if (v === 2) return <Tag color="default">🥈 {v}</Tag>;
+                          if (v === 3) return <Tag color="orange">🥉 {v}</Tag>;
+                          return <Tag color="blue">{v}</Tag>;
+                        },
+                      },
+                      { title: '姓名', dataIndex: 'student_name', key: 'student_name' },
+                      { title: '学号', dataIndex: 'student_no', key: 'student_no' },
+                      {
+                        title: '总分',
+                        dataIndex: 'total_score',
+                        key: 'total_score',
+                        render: (v: number) => <Text strong>{v.toFixed(1)}</Text>,
+                      },
+                    ]}
+                    rowKey="key"
+                    size="small"
+                    pagination={rankings.length > 20 ? { pageSize: 20, showSizeChanger: false } : false}
+                  />
+                ) : (
+                  <div style={{
+                    textAlign: 'center', padding: '20px 0',
+                    background: '#fafafa', borderRadius: 8,
+                  }}>
+                    <Text type="secondary">
+                      {hasConfiguredSubjects
+                        ? '暂无排名数据，请先录入各科目成绩'
+                        : '请先配置考试科目并录入成绩'}
+                    </Text>
+                  </div>
+                )}
+              </Card>
             </>
           )}
         </div>
-      ) : (
-        <Empty description="请先在考试列表中选择一个考试" />
-      ),
-    },
-    {
-      key: 'rankings',
-      label: '排名统计',
-      children: (
-        <div>
-          <Select
-            style={{ width: 200, marginBottom: 16 }}
-            placeholder="选择考试查看排名"
-            value={selectedExamId}
-            onChange={setSelectedExamId}
-            options={(exams || []).map((e) => ({ value: e.id, label: e.name }))}
-          />
-          {rankings && (
-            <Table
-              dataSource={rankings.map((r) => ({ ...r, key: r.student_id }))}
-              columns={[
-                { title: '排名', dataIndex: 'rank_no', key: 'rank_no', render: (v: number) => <Tag color="blue">{v}</Tag> },
-                { title: '姓名', dataIndex: 'student_name', key: 'student_name' },
-                { title: '学号', dataIndex: 'student_no', key: 'student_no' },
-                { title: '总分', dataIndex: 'total_score', key: 'total_score', render: (v: number) => v.toFixed(1) },
-              ]}
-              rowKey="key"
-              size="small"
-              pagination={false}
-            />
-          )}
-          {!selectedExamId && <Empty description="请选择考试" />}
-        </div>
-      ),
-    },
-  ];
-
-  return (
-    <div>
-      <div className="page-header">
-        <Title level={4}>成绩管理</Title>
       </div>
 
-      <Card>
-        <Tabs items={tabItems} />
-      </Card>
+      {/* ─── Modals (unchanged business logic) ─── */}
 
+      {/* Exam CRUD Modal */}
       <Modal
         title={editingExam ? '编辑考试' : '创建考试'}
         open={examModalVisible}
@@ -708,12 +1193,15 @@ export default function ScoreManagement() {
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item name="exam_type" label="考试类型">
-                <Select allowClear options={[
-                  { value: '月考', label: '月考' },
-                  { value: '期中', label: '期中' },
-                  { value: '期末', label: '期末' },
-                  { value: '模拟', label: '模拟' },
-                ]} />
+                <Select
+                  allowClear
+                  options={[
+                    { value: '月考', label: '月考' },
+                    { value: '期中', label: '期中' },
+                    { value: '期末', label: '期末' },
+                    { value: '模拟', label: '模拟' },
+                  ]}
+                />
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -728,6 +1216,7 @@ export default function ScoreManagement() {
         </Form>
       </Modal>
 
+      {/* Subject CRUD Modal */}
       <Modal
         title={editingSubject ? '编辑科目' : '新增科目'}
         open={subjectModalVisible}
@@ -751,10 +1240,11 @@ export default function ScoreManagement() {
         </Form>
       </Modal>
 
+      {/* Subject Config Modal */}
       <Modal
-        title="配置考试科目与统计规则"
+        title="配置考试科目与评分规则"
         open={configModalVisible}
-        onOk={handleSaveExamSubjectConfigs}
+        onOk={handleSaveConfigs}
         onCancel={() => setConfigModalVisible(false)}
         confirmLoading={saveConfigMutation.isPending}
         width={900}
@@ -802,11 +1292,7 @@ export default function ScoreManagement() {
                   {
                     title: '满分',
                     render: (_, field) => (
-                      <Form.Item
-                        name={[field.name, 'full_score']}
-                        rules={[{ required: true, message: '请输入满分' }]}
-                        noStyle
-                      >
+                      <Form.Item name={[field.name, 'full_score']} rules={[{ required: true, message: '请输入满分' }]} noStyle>
                         <Input type="number" min={1} />
                       </Form.Item>
                     ),
@@ -814,11 +1300,7 @@ export default function ScoreManagement() {
                   {
                     title: '及格线',
                     render: (_, field) => (
-                      <Form.Item
-                        name={[field.name, 'pass_score']}
-                        rules={[{ required: true, message: '请输入及格线' }]}
-                        noStyle
-                      >
+                      <Form.Item name={[field.name, 'pass_score']} rules={[{ required: true, message: '请输入及格线' }]} noStyle>
                         <Input type="number" min={0} />
                       </Form.Item>
                     ),
@@ -826,11 +1308,7 @@ export default function ScoreManagement() {
                   {
                     title: '优秀线',
                     render: (_, field) => (
-                      <Form.Item
-                        name={[field.name, 'excellent_score']}
-                        rules={[{ required: true, message: '请输入优秀线' }]}
-                        noStyle
-                      >
+                      <Form.Item name={[field.name, 'excellent_score']} rules={[{ required: true, message: '请输入优秀线' }]} noStyle>
                         <Input type="number" min={0} />
                       </Form.Item>
                     ),
@@ -850,6 +1328,7 @@ export default function ScoreManagement() {
         </Form>
       </Modal>
 
+      {/* Score Entry Modal */}
       <Modal
         title="录入成绩"
         open={scoreModalVisible}
@@ -860,7 +1339,7 @@ export default function ScoreManagement() {
       >
         <Form form={scoreForm} layout="vertical">
           <Table
-            dataSource={(students || []).map((s) => ({
+            dataSource={students.map((s) => ({
               key: s.id,
               student_name: s.name,
               student_no: s.student_no,
@@ -880,12 +1359,13 @@ export default function ScoreManagement() {
                 ),
               },
             ]}
-            pagination={false}
+            pagination={students.length > 20 ? { pageSize: 20 } : false}
             size="small"
           />
         </Form>
       </Modal>
 
+      {/* Score Import Preview Modal */}
       <Modal
         title="成绩导入预览"
         open={scorePreviewVisible}
@@ -894,8 +1374,13 @@ export default function ScoreManagement() {
           setScorePreviewData(null);
           setScoreImportFilePath(null);
         }}
-        onOk={handleConfirmImportScores}
-        okButtonProps={{ disabled: !scorePreviewData || scorePreviewData.valid_rows === 0 || scorePreviewData.error_rows > 0 }}
+        onOk={handleConfirmImport}
+        okButtonProps={{
+          disabled:
+            !scorePreviewData ||
+            scorePreviewData.valid_rows === 0 ||
+            scorePreviewData.error_rows > 0,
+        }}
         width={960}
       >
         {scorePreviewData && (
@@ -903,8 +1388,12 @@ export default function ScoreManagement() {
             <Space style={{ marginBottom: 12 }}>
               <Tag color="blue">共 {scorePreviewData.total_rows} 条</Tag>
               <Tag color="green">有效 {scorePreviewData.valid_rows} 条</Tag>
-              {scorePreviewData.error_rows > 0 && <Tag color="red">错误 {scorePreviewData.error_rows} 条</Tag>}
-              {scorePreviewData.warnings.length > 0 && <Tag color="orange">覆盖提醒 {scorePreviewData.warnings.length} 条</Tag>}
+              {scorePreviewData.error_rows > 0 && (
+                <Tag color="red">错误 {scorePreviewData.error_rows} 条</Tag>
+              )}
+              {scorePreviewData.warnings.length > 0 && (
+                <Tag color="orange">覆盖提醒 {scorePreviewData.warnings.length} 条</Tag>
+              )}
             </Space>
             {scorePreviewData.errors.length > 0 && (
               <Alert
@@ -914,7 +1403,7 @@ export default function ScoreManagement() {
                 message="以下错误会阻止导入，请先修正文件："
                 description={
                   <ul style={{ margin: 0, paddingLeft: 16 }}>
-                    {scorePreviewData.errors.map((error, index) => <li key={index}>{error}</li>)}
+                    {scorePreviewData.errors.map((e, i) => <li key={i}>{e}</li>)}
                   </ul>
                 }
               />
@@ -928,15 +1417,15 @@ export default function ScoreManagement() {
               columns={[
                 { title: '行号', dataIndex: 'row', width: 70 },
                 { title: '学号', dataIndex: 'student_no', width: 120 },
-                { title: '姓名', dataIndex: 'student_name', width: 120, render: (value: string | null) => value || '-' },
-                { title: '成绩', dataIndex: 'score_value', width: 100, render: (value: number | null) => value ?? '-' },
+                { title: '姓名', dataIndex: 'student_name', width: 120, render: (v: string | null) => v || '-' },
+                { title: '成绩', dataIndex: 'score_value', width: 100, render: (v: number | null) => v ?? '-' },
                 {
                   title: '状态',
                   dataIndex: 'valid',
                   width: 100,
-                  render: (value: boolean) => <Tag color={value ? 'green' : 'red'}>{value ? '有效' : '错误'}</Tag>,
+                  render: (v: boolean) => <Tag color={v ? 'green' : 'red'}>{v ? '有效' : '错误'}</Tag>,
                 },
-                { title: '提醒', dataIndex: 'warning', render: (value: string | null) => value || '-' },
+                { title: '提醒', dataIndex: 'warning', render: (v: string | null) => v || '-' },
               ]}
             />
           </>
