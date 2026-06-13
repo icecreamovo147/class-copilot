@@ -364,8 +364,6 @@ export const configService = {
     head_teacher?: string;
     default_semester?: string;
     default_backup_dir?: string;
-    reminder_threshold?: number;
-    export_preference?: 'xlsx' | 'pdf' | 'both';
   }) => cmd<void>('save_settings_preferences', data as Record<string, unknown>),
   recentBackups: () => cmd<SettingsOverview['recent_backups']>('get_recent_backups'),
   downloadTemplate: (type: string, filePath: string) =>

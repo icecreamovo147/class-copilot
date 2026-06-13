@@ -11,16 +11,6 @@ PRAGMA foreign_keys = ON;
 BEGIN TRANSACTION;
 
 -- ============================================
--- 1. 系统配置 (system_config)
--- ============================================
-INSERT OR REPLACE INTO system_config (id, config_key, config_value, description, created_at, updated_at) VALUES
-(1, 'school_name', '阳光实验中学', '学校名称', '2026-06-12 20:00:00', '2026-06-12 20:00:00'),
-(2, 'semester', '2025-2026学年第二学期', '当前学期', '2026-06-12 20:00:00', '2026-06-12 20:00:00'),
-(3, 'auto_backup', 'true', '是否自动备份', '2026-06-12 20:00:00', '2026-06-12 20:00:00'),
-(4, 'backup_interval_hours', '24', '备份间隔(小时)', '2026-06-12 20:00:00', '2026-06-12 20:00:00'),
-(5, 'backup_retention_days', '30', '备份保留天数', '2026-06-12 20:00:00', '2026-06-12 20:00:00');
-
--- ============================================
 -- 2. 届次/班级 (cohort)
 -- ============================================
 INSERT INTO cohort (id, cohort_name, class_name, grade_name, school_name, head_teacher, admission_year, graduation_year, semester, status, is_current, archive_time, remark, created_at, updated_at) VALUES

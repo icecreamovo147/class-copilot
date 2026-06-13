@@ -262,6 +262,7 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error>
     ensure_subject_columns(pool).await?;
     ensure_homework_columns(pool).await?;
     ensure_attendance_columns(pool).await?;
+    cleanup_obsolete_configs(pool).await?;
     sqlx::query(&format!("PRAGMA user_version = {}", MIGRATIONS.len()))
         .execute(pool)
         .await?;
@@ -284,6 +285,24 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error>
     }
 
     info!("Database migrations completed successfully");
+    Ok(())
+}
+
+async fn cleanup_obsolete_configs(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "DELETE FROM system_config
+         WHERE config_key IN (
+             'school_name',
+             'semester',
+             'auto_backup',
+             'backup_interval_hours',
+             'backup_retention_days',
+             'reminder_threshold',
+             'export_preference'
+         )",
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 

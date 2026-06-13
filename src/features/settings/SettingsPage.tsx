@@ -6,14 +6,11 @@ import {
   Divider,
   Form,
   Input,
-  InputNumber,
   List,
   message,
   Modal,
-  Radio,
   Select,
   Space,
-  Tag,
   Typography,
 } from 'antd';
 import {
@@ -60,8 +57,6 @@ export default function SettingsPage() {
       head_teacher: overview.head_teacher || '',
       default_semester: overview.default_semester || '',
       default_backup_dir: overview.default_backup_dir,
-      reminder_threshold: overview.reminder_threshold,
-      export_preference: overview.export_preference,
     });
   }, [overview, form]);
 
@@ -247,18 +242,6 @@ export default function SettingsPage() {
                 }
               />
             </Form.Item>
-            <Form.Item name="reminder_threshold" label="提醒阈值（天/次）" rules={[{ required: true, message: '请输入提醒阈值' }]}>
-              <InputNumber min={1} max={30} style={{ width: 180 }} />
-            </Form.Item>
-            <Form.Item name="export_preference" label="导出偏好" rules={[{ required: true, message: '请选择导出偏好' }]}>
-              <Radio.Group
-                options={[
-                  { label: '仅 Excel', value: 'xlsx' },
-                  { label: '仅 PDF', value: 'pdf' },
-                  { label: 'Excel + PDF', value: 'both' },
-                ]}
-              />
-            </Form.Item>
             <Button type="primary" onClick={handleSavePreferences} loading={preferencesMutation.isPending}>
               保存偏好
             </Button>
@@ -368,9 +351,6 @@ export default function SettingsPage() {
           <Descriptions.Item label="数据目录">{overview?.data_dir || '-'}</Descriptions.Item>
           <Descriptions.Item label="数据库文件">{overview?.database_path || '-'}</Descriptions.Item>
           <Descriptions.Item label="技术栈">Tauri 2.x + React + Rust + SQLite</Descriptions.Item>
-          <Descriptions.Item label="导出偏好">
-            <Tag>{overview?.export_preference || '-'}</Tag>
-          </Descriptions.Item>
         </Descriptions>
       </Card>
 

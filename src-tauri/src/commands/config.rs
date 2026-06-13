@@ -11,8 +11,6 @@ const CONFIG_SCHOOL_NAME: &str = "default_school_name";
 const CONFIG_HEAD_TEACHER: &str = "default_head_teacher";
 const CONFIG_SEMESTER: &str = "default_semester";
 const CONFIG_BACKUP_DIR: &str = "default_backup_dir";
-const CONFIG_REMINDER_THRESHOLD: &str = "reminder_threshold";
-const CONFIG_EXPORT_PREFERENCE: &str = "export_preference";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SettingsOverview {
@@ -20,8 +18,6 @@ pub struct SettingsOverview {
     pub head_teacher: Option<String>,
     pub default_semester: Option<String>,
     pub default_backup_dir: String,
-    pub reminder_threshold: i64,
-    pub export_preference: String,
     pub app_version: String,
     pub database_version: i64,
     pub data_dir: String,
@@ -124,13 +120,6 @@ pub async fn get_settings_overview(
     let head_teacher = get_config_value(&state, CONFIG_HEAD_TEACHER).await?;
     let default_semester = get_config_value(&state, CONFIG_SEMESTER).await?;
     let backup_dir_value = get_config_value(&state, CONFIG_BACKUP_DIR).await?;
-    let reminder_threshold = get_config_value(&state, CONFIG_REMINDER_THRESHOLD)
-        .await?
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(3);
-    let export_preference = get_config_value(&state, CONFIG_EXPORT_PREFERENCE)
-        .await?
-        .unwrap_or_else(|| "xlsx".to_string());
 
     let default_backup_dir = backup_dir_value.unwrap_or_else(|| {
         fallback_backup_dir(&app)
@@ -153,8 +142,6 @@ pub async fn get_settings_overview(
         head_teacher,
         default_semester,
         default_backup_dir: default_backup_dir.clone(),
-        reminder_threshold,
-        export_preference,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         database_version,
         data_dir: data_dir.to_string_lossy().to_string(),
@@ -171,8 +158,6 @@ pub async fn save_settings_preferences(
     head_teacher: Option<String>,
     default_semester: Option<String>,
     default_backup_dir: Option<String>,
-    reminder_threshold: Option<i64>,
-    export_preference: Option<String>,
 ) -> Result<(), String> {
     if let Some(value) = school_name {
         upsert_config(&state, CONFIG_SCHOOL_NAME, value.trim()).await?;
@@ -191,17 +176,6 @@ pub async fn save_settings_preferences(
         };
         fs::create_dir_all(&dir).map_err(|e| format!("创建备份目录失败: {}", e))?;
         upsert_config(&state, CONFIG_BACKUP_DIR, &dir.to_string_lossy()).await?;
-    }
-    if let Some(value) = reminder_threshold {
-        let sanitized = value.clamp(1, 30).to_string();
-        upsert_config(&state, CONFIG_REMINDER_THRESHOLD, &sanitized).await?;
-    }
-    if let Some(value) = export_preference {
-        let normalized = match value.as_str() {
-            "xlsx" | "pdf" | "both" => value,
-            _ => return Err("导出偏好仅支持 xlsx、pdf 或 both".to_string()),
-        };
-        upsert_config(&state, CONFIG_EXPORT_PREFERENCE, &normalized).await?;
     }
     Ok(())
 }

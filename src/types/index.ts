@@ -267,8 +267,6 @@ export interface SettingsOverview {
   head_teacher: string | null;
   default_semester: string | null;
   default_backup_dir: string;
-  reminder_threshold: number;
-  export_preference: 'xlsx' | 'pdf' | 'both';
   app_version: string;
   database_version: number;
   data_dir: string;
